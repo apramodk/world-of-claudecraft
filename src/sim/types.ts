@@ -7,6 +7,8 @@ export const TURN_SPEED = Math.PI; // rad/sec keyboard turning
 export const MELEE_RANGE = 5; // yards
 export const INTERACT_RANGE = 5;
 export const GCD = 1.5; // seconds
+export const CAST_PUSHBACK_SEC = 0.5; // vanilla: each hit delays a cast by 0.5s
+export const CHANNEL_PUSHBACK_FRACTION = 0.25; // vanilla: each hit shaves 25% off a channel
 
 export type PlayerClass =
   | 'warrior' | 'paladin' | 'hunter' | 'rogue' | 'priest'

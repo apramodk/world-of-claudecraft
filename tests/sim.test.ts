@@ -270,6 +270,59 @@ describe('combat', () => {
   });
 });
 
+describe('spell pushback', () => {
+  function castingMage(level = 1) {
+    const sim = makeSim('mage');
+    if (level > 1) sim.setPlayerLevel(level);
+    const wolf = nearestMob(sim, 'forest_wolf');
+    teleportTo(sim, wolf.pos.x + 15, wolf.pos.z);
+    sim.targetEntity(wolf.id);
+    facePlayerAt(sim, wolf);
+    return { sim, wolf };
+  }
+
+  it('a hit pushes a cast back instead of cancelling it', () => {
+    const { sim, wolf } = castingMage();
+    sim.castAbility('fireball');
+    expect(sim.player.castingAbility).toBe('fireball');
+    const remBefore = sim.player.castRemaining;
+    const totalBefore = sim.player.castTotal;
+    (sim as any).dealDamage(wolf, sim.player, 5, false, 'physical', null, 'hit');
+    expect(sim.player.castingAbility).toBe('fireball');
+    expect(sim.player.castRemaining).toBeCloseTo(remBefore + 0.5, 3);
+    expect(sim.player.castTotal).toBeCloseTo(totalBefore + 0.5, 3);
+  });
+
+  it('a pushed-back cast still completes and lands', () => {
+    const { sim, wolf } = castingMage();
+    sim.castAbility('fireball');
+    (sim as any).dealDamage(wolf, sim.player, 5, false, 'physical', null, 'hit');
+    const hpBefore = wolf.hp;
+    for (let i = 0; i < 20 * 8 && sim.player.castingAbility; i++) sim.tick();
+    expect(wolf.hp).toBeLessThan(hpBefore);
+  });
+
+  it('a hit shaves a quarter off a channel instead of cancelling it', () => {
+    const { sim, wolf } = castingMage(8);
+    sim.castAbility('arcane_missiles');
+    expect(sim.player.channeling).toBe(true);
+    const remBefore = sim.player.castRemaining;
+    const total = sim.player.castTotal;
+    (sim as any).dealDamage(wolf, sim.player, 5, false, 'physical', null, 'hit');
+    expect(sim.player.channeling).toBe(true);
+    expect(sim.player.castRemaining).toBeCloseTo(remBefore - total * 0.25, 3);
+  });
+
+  it('misses and fully absorbed hits do not push the cast back', () => {
+    const { sim, wolf } = castingMage();
+    sim.castAbility('fireball');
+    const remBefore = sim.player.castRemaining;
+    (sim as any).dealDamage(wolf, sim.player, 0, false, 'physical', null, 'miss');
+    expect(sim.player.castRemaining).toBe(remBefore);
+    expect(sim.player.castingAbility).toBe('fireball');
+  });
+});
+
 describe('rogue', () => {
   it('regenerates energy on the 2-second tick', () => {
     const sim = makeSim('rogue');

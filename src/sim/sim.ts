@@ -7,7 +7,8 @@ import { createGroundObject, createMob, createNpc, createPlayer, recalcPlayerSta
 import { Rng } from './rng';
 import { groundHeight, WATER_LEVEL } from './world';
 import {
-  AbilityDef, AbilityEffect, Aura, DT, Entity, EquipSlot, GCD, INTERACT_RANGE, InvSlot, MELEE_RANGE, MAX_LEVEL,
+  AbilityDef, AbilityEffect, Aura, CAST_PUSHBACK_SEC, CHANNEL_PUSHBACK_FRACTION, DT, Entity, EquipSlot, GCD,
+  INTERACT_RANGE, InvSlot, MELEE_RANGE, MAX_LEVEL,
   MoveInput, PlayerClass, QuestProgress, QuestState, RUN_SPEED, SimConfig, SimEvent, TURN_SPEED, Vec3,
   angleTo, armorReduction, dist2d, emptyMoveInput, meleeMissChance, mobXpValue, normAngle,
   rageFromDealing, rageFromTaking, spellHitChance, xpForLevel,
@@ -743,6 +744,15 @@ export class Sim {
     this.emit({ type: 'castStop', entityId: p.id, success: false });
   }
 
+  private pushbackCast(p: Entity): void {
+    if (p.channeling) {
+      p.castRemaining = Math.max(0, p.castRemaining - p.castTotal * CHANNEL_PUSHBACK_FRACTION);
+    } else {
+      p.castRemaining += CAST_PUSHBACK_SEC;
+      p.castTotal += CAST_PUSHBACK_SEC;
+    }
+  }
+
   castAbilityBySlot(slot: number, pid?: number): void {
     const r = this.resolve(pid);
     if (!r) return;
@@ -1411,7 +1421,11 @@ export class Sim {
       }
       if (target.consuming) target.consuming = null;
       if (target.sitting) target.sitting = false;
-      if (target.castingAbility && source && source.id !== target.id) this.cancelCast(target);
+      // vanilla spell pushback: a landed hit delays the cast rather than
+      // cancelling it (misses and fully absorbed hits don't push back)
+      if (target.castingAbility && source && source.id !== target.id && amount > 0 && kind === 'hit') {
+        this.pushbackCast(target);
+      }
     }
 
     if (target.hp <= 0) {
