@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   ensureSchema, pool, createAccount, findAccount, touchLogin, saveToken, accountForToken,
   listCharacters, getCharacter, createCharacter, deleteCharacter, closeOrphanSessions,
+  claimCharacterOnline, releaseAllCharactersForRegion,
 } from './db';
 import { hashPassword, verifyPassword, newToken, validUsername, validPassword, validCharName } from './auth';
 import { json, readBody } from './http_util';
@@ -197,6 +198,7 @@ async function main(): Promise<void> {
   await ensureSchema();
   const orphans = await closeOrphanSessions();
   if (orphans > 0) console.log(`closed ${orphans} orphaned play session(s) from a previous run`);
+  await releaseAllCharactersForRegion(); // clear stale online claims from a crash of this shard
   console.log('database ready');
 
   const server = http.createServer((req, res) => {
@@ -247,8 +249,17 @@ async function main(): Promise<void> {
       ws.close();
       return;
     }
+    // cross-shard guard: claim the character globally before joining — another
+    // region may have it online (the local check in game.join can't see that)
+    const claimed = await claimCharacterOnline(character.id);
+    if (!claimed) {
+      ws.send(JSON.stringify({ t: 'error', error: 'character already in world' }));
+      ws.close();
+      return;
+    }
     const result = game.join(ws, accountId, character.id, character.name, character.class, character.state, character.is_gm);
     if ('error' in result) {
+      // do not release: a same-shard duplicate means the live session owns the claim
       ws.send(JSON.stringify({ t: 'error', error: result.error }));
       ws.close();
       return;

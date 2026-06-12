@@ -3,7 +3,7 @@ import { Sim } from '../src/sim/sim';
 import type { PlayerMeta } from '../src/sim/sim';
 import { DT, Entity, SimEvent, dist2d } from '../src/sim/types';
 import { zoneAt, DUNGEONS } from '../src/sim/data';
-import { saveCharacterState, openPlaySession, closePlaySession } from './db';
+import { saveCharacterState, openPlaySession, closePlaySession, releaseCharacterOnline } from './db';
 
 const WORLD_SEED = 20061;
 const INTEREST_RADIUS = 120;
@@ -180,6 +180,9 @@ export class GameServer {
       void closePlaySession(session.dbSessionId).catch((err) => console.error('failed to close play session:', err));
     }
     await this.saveCharacter(session).catch((err) => console.error('save on leave failed:', err));
+    // release the cross-shard online claim only after the final save lands —
+    // another shard may admit the character the moment this clears
+    void releaseCharacterOnline(session.characterId).catch((err) => console.error('failed to release online claim:', err));
     this.sim.removePlayer(session.pid);
     this.broadcastSystem(`${session.name} has left the world. (${reason})`);
   }
@@ -203,6 +206,9 @@ export class GameServer {
   // sessions of currently-online players keep their real duration.
   async endAllPlaySessions(): Promise<void> {
     for (const session of this.clients.values()) {
+      // free the cross-shard claim so players can log into another realm
+      // while this one is down
+      await releaseCharacterOnline(session.characterId).catch((err) => console.error('failed to release online claim:', err));
       if (session.dbSessionId === null) continue;
       await closePlaySession(session.dbSessionId).catch((err) => console.error('failed to close play session:', err));
     }

@@ -1,0 +1,9 @@
+# Azure mode: managed Postgres Flexible Server, no local postgres container.
+# Usage: docker compose -f docker-compose.yml -f deploy/docker-compose.azure.yml up -d --build game
+services:
+  game:
+    depends_on: !reset []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env (Azure Postgres connection string)}
+      REGION: ${REGION:?Set REGION in .env (eastus or westus)}
+      PORT: "8787"

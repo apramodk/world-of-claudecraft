@@ -15,6 +15,10 @@ export const DATABASE_URL =
 
 export const pool = new Pool({ connectionString: DATABASE_URL, max: 10 });
 
+// Shard identity: multiple regional servers may share one database. Region
+// scoping keeps one shard's restarts and login claims from touching another's.
+export const REGION = process.env.REGION ?? 'default';
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS accounts (
   id SERIAL PRIMARY KEY,
@@ -43,6 +47,8 @@ CREATE TABLE IF NOT EXISTS characters (
 CREATE INDEX IF NOT EXISTS characters_account ON characters(account_id);
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS is_gm BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS online_region TEXT;
+ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT 'default';
 CREATE TABLE IF NOT EXISTS play_sessions (
   id SERIAL PRIMARY KEY,
   account_id INT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -159,8 +165,8 @@ export async function openPlaySession(
   characterName: string,
 ): Promise<number> {
   const res = await pool.query(
-    'INSERT INTO play_sessions (account_id, character_id, character_name) VALUES ($1, $2, $3) RETURNING id',
-    [accountId, characterId, characterName],
+    'INSERT INTO play_sessions (account_id, character_id, character_name, region) VALUES ($1, $2, $3, $4) RETURNING id',
+    [accountId, characterId, characterName, REGION],
   );
   return res.rows[0].id;
 }
@@ -170,8 +176,38 @@ export async function closePlaySession(sessionId: number): Promise<void> {
 }
 
 // Sessions left open by a crash have an unknown duration; close them at their
-// start time so they don't inflate playtime stats forever.
+// start time so they don't inflate playtime stats forever. Region-scoped so a
+// restart of one shard never closes live sessions on another.
 export async function closeOrphanSessions(): Promise<number> {
-  const res = await pool.query('UPDATE play_sessions SET ended_at = started_at WHERE ended_at IS NULL');
+  const res = await pool.query(
+    'UPDATE play_sessions SET ended_at = started_at WHERE ended_at IS NULL AND region = $1',
+    [REGION],
+  );
   return res.rowCount ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-shard duplicate-login guard: the in-process check in game.ts only sees
+// this shard's clients; online_region makes the claim global.
+
+// Returns true if we claimed the character (it was offline or already ours).
+export async function claimCharacterOnline(characterId: number): Promise<boolean> {
+  const res = await pool.query(
+    `UPDATE characters SET online_region = $2
+     WHERE id = $1 AND (online_region IS NULL OR online_region = $2)`,
+    [characterId, REGION],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+export async function releaseCharacterOnline(characterId: number): Promise<void> {
+  await pool.query(
+    'UPDATE characters SET online_region = NULL WHERE id = $1 AND online_region = $2',
+    [characterId, REGION],
+  );
+}
+
+// Boot: clear stale claims from a crash of THIS shard only.
+export async function releaseAllCharactersForRegion(): Promise<void> {
+  await pool.query('UPDATE characters SET online_region = NULL WHERE online_region = $1', [REGION]);
 }
