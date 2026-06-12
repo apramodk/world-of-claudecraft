@@ -2438,11 +2438,11 @@ export class Sim {
       const party = this.partyOf(r.meta.entityId);
       if (!party) { this.error(r.meta.entityId, 'You are not in a party.'); return; }
       for (const mPid of party.members) {
-        this.emit({ type: 'chat', from: r.meta.name, text: clean, channel: 'party', pid: mPid });
+        this.emit({ type: 'chat', fromPid: r.meta.entityId, from: r.meta.name, text: clean, channel: 'party', pid: mPid });
       }
       return;
     }
-    this.emit({ type: 'chat', from: r.meta.name, text: clean, channel: 'say' });
+    this.emit({ type: 'chat', fromPid: r.meta.entityId, from: r.meta.name, text: clean, channel: 'say' });
   }
 
   // -------------------------------------------------------------------------

@@ -9,6 +9,9 @@ const WORLD_SEED = 20061;
 const INTEREST_RADIUS = 120;
 const EVENT_RADIUS = 90;
 const AUTOSAVE_SECONDS = 30;
+const CHAT_RATE_BURST = 5;
+const CHAT_RATE_REFILL_PER_SECOND = 1 / 3; // sustained 20 messages/minute
+const CHAT_RATE_ERROR_COOLDOWN_SECONDS = 4;
 // Exponential moving average weight for the per-tick duration stat.
 const TICK_EMA_ALPHA = 0.05;
 
@@ -22,6 +25,9 @@ export interface ClientSession {
   alive: boolean;
   joinedAt: number;
   dbSessionId: number | null; // play_sessions row, set once the insert lands
+  chatTokens: number;
+  chatLastRefill: number;
+  chatLastRateError: number;
   // serialized form of each delta self field as last sent to this client;
   // a field is omitted from a snapshot while its serialization is unchanged
   lastSent: Record<string, string>;
@@ -154,6 +160,7 @@ export class GameServer {
     const session: ClientSession = {
       ws, accountId, characterId, pid, name,
       lastSave: Date.now(), alive: true, joinedAt: Date.now(), dbSessionId: null,
+      chatTokens: CHAT_RATE_BURST, chatLastRefill: Date.now() / 1000, chatLastRateError: 0,
       lastSent: {},
     };
     this.clients.set(pid, session);
@@ -317,7 +324,9 @@ export class GameServer {
       case 'buy': if (typeof msg.npc === 'number' && typeof msg.item === 'string') sim.buyItem(msg.npc, msg.item, pid); break;
       case 'sell': if (typeof msg.item === 'string') sim.sellItem(msg.item, pid); break;
       case 'release': sim.releaseSpirit(pid); break;
-      case 'chat': if (typeof msg.text === 'string') sim.chat(msg.text, pid); break;
+      case 'chat':
+        if (typeof msg.text === 'string' && this.consumeChatToken(session)) sim.chat(msg.text, pid);
+        break;
       // party
       case 'pinvite': if (typeof msg.id === 'number') sim.partyInvite(msg.id, pid); break;
       case 'paccept': sim.partyAccept(pid); break;
@@ -522,6 +531,22 @@ export class GameServer {
     else if ('entityId' in ev && typeof ev.entityId === 'number') id = ev.entityId;
     if (id === undefined) return null; // chat/log etc: broadcast
     return this.sim.entities.get(id)?.pos ?? null;
+  }
+
+  private consumeChatToken(session: ClientSession): boolean {
+    const now = Date.now() / 1000;
+    const elapsed = Math.max(0, now - session.chatLastRefill);
+    session.chatTokens = Math.min(CHAT_RATE_BURST, session.chatTokens + elapsed * CHAT_RATE_REFILL_PER_SECOND);
+    session.chatLastRefill = now;
+    if (session.chatTokens >= 1) {
+      session.chatTokens -= 1;
+      return true;
+    }
+    if (now - session.chatLastRateError >= CHAT_RATE_ERROR_COOLDOWN_SECONDS) {
+      session.chatLastRateError = now;
+      this.send(session, { t: 'events', list: [{ type: 'error', text: 'You are sending messages too quickly. Slow down.' }] });
+    }
+    return false;
   }
 
   private broadcastSystem(text: string): void {

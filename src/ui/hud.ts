@@ -27,6 +27,7 @@ const CLASS_GLYPH: Record<string, string> = {
 
 // yards past a zone boundary before the crossing banner/welcome commits
 const ZONE_BANNER_DEADBAND = 5;
+const IGNORED_CHAT_NAMES_KEY = 'woc_ignored_chat_names';
 
 export class Hud {
   private abilityButtons: { btn: HTMLButtonElement; label: HTMLSpanElement; cdOverlay: HTMLDivElement; cdText: HTMLDivElement; lastIcon: string }[] = [];
@@ -52,10 +53,12 @@ export class Hud {
   private lastCombatEventAt = 0;
   private lastZoneId = '';
   private mapZoneId = ''; // zone the cached map-window canvas was rendered for
+  private ignoredChatNames = new Set<string>();
 
   private meters: Meters;
 
   constructor(private sim: IWorld, private renderer: Renderer) {
+    this.ignoredChatNames = this.loadIgnoredChatNames();
     this.meters = new Meters(sim);
     this.buildActionBar();
     this.buildXpTicks();
@@ -780,6 +783,7 @@ export class Hud {
           this.refreshGossip();
           break;
         case 'chat':
+          if (this.isChatIgnored(ev.from)) break;
           if (ev.channel === 'party') this.log(`[Party] ${ev.from}: ${ev.text}`, '#7fd4ff');
           else this.log(`[${ev.from}]: ${ev.text}`, '#9adcf0');
           break;
@@ -1317,10 +1321,12 @@ export class Hud {
     const party = this.sim.partyInfo;
     const isLeader = party?.leader === this.sim.playerId;
     const isMember = !!party?.members.some((m) => m.pid === pid);
+    const ignored = this.isChatIgnored(name);
     let html = `<div class="ctx-title">${name}</div>`;
     if (!isMember) html += `<div class="ctx-item" data-act="invite">Invite to Party</div>`;
     html += `<div class="ctx-item" data-act="trade">Trade</div>`;
     html += `<div class="ctx-item" data-act="duel">Challenge to a Duel</div>`;
+    html += `<div class="ctx-item" data-act="ignore">${ignored ? 'Unignore' : 'Ignore'} Chat</div>`;
     if (isLeader && isMember && pid !== this.sim.playerId) html += `<div class="ctx-item" data-act="kick">Remove from Party</div>`;
     html += `<div class="ctx-item" data-act="close">Cancel</div>`;
     el.innerHTML = html;
@@ -1334,9 +1340,45 @@ export class Hud {
         if (act === 'invite') this.sim.partyInvite(pid);
         else if (act === 'trade') this.sim.tradeRequest(pid);
         else if (act === 'duel') this.sim.duelRequest(pid);
+        else if (act === 'ignore') this.toggleChatIgnore(name);
         else if (act === 'kick') this.sim.partyKick(pid);
       });
     });
+  }
+
+  private chatIgnoreKey(name: string): string {
+    return name.trim().toLowerCase();
+  }
+
+  private isChatIgnored(name: string): boolean {
+    return this.ignoredChatNames.has(this.chatIgnoreKey(name));
+  }
+
+  private loadIgnoredChatNames(): Set<string> {
+    try {
+      const raw = localStorage.getItem(IGNORED_CHAT_NAMES_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(parsed) ? parsed.filter((name): name is string => typeof name === 'string') : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  private saveIgnoredChatNames(): void {
+    localStorage.setItem(IGNORED_CHAT_NAMES_KEY, JSON.stringify([...this.ignoredChatNames]));
+  }
+
+  private toggleChatIgnore(name: string): void {
+    const key = this.chatIgnoreKey(name);
+    if (!key) return;
+    if (this.ignoredChatNames.has(key)) {
+      this.ignoredChatNames.delete(key);
+      this.log(`No longer ignoring ${name}.`, '#aaf');
+    } else {
+      this.ignoredChatNames.add(key);
+      this.log(`Ignoring chat from ${name}.`, '#aaf');
+    }
+    this.saveIgnoredChatNames();
   }
 
   closeContextMenu(): void {

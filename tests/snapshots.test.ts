@@ -147,6 +147,27 @@ describe('delta snapshots', () => {
   });
 });
 
+describe('chat moderation', () => {
+  it('rate-limits chat bursts per connected client', () => {
+    const server = new GameServer();
+    const fc = fakeWs();
+    const session = joinServer(server, fc, 1, 'Testa');
+    fc.sent.length = 0;
+
+    for (let i = 0; i < 6; i++) {
+      server.handleMessage(session, JSON.stringify({ t: 'cmd', cmd: 'chat', text: `msg ${i}` }));
+    }
+    (server as any).routeEvents(server.sim.tick());
+
+    const events = fc.sent.flatMap((msg) => msg.t === 'events' ? msg.list : []);
+    expect(events.filter((ev) => ev.type === 'chat')).toHaveLength(5);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'error',
+      text: 'You are sending messages too quickly. Slow down.',
+    }));
+  });
+});
+
 describe('client-side delta merge', () => {
   it('keeps previous structures when delta fields are omitted', () => {
     const server = new GameServer();

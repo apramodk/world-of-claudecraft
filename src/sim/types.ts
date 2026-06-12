@@ -447,7 +447,7 @@ export type SimEvent = { pid?: number } & (
   | { type: 'playerDeath' }
   | { type: 'respawn' }
   | { type: 'vendor'; action: 'buy' | 'sell'; itemId: string }
-  | { type: 'chat'; from: string; text: string; channel?: 'say' | 'party' }
+  | { type: 'chat'; fromPid: number; from: string; text: string; channel?: 'say' | 'party' }
   | { type: 'partyInvite'; fromPid: number; fromName: string }
   | { type: 'tradeRequest'; fromPid: number; fromName: string }
   | { type: 'duelRequest'; fromPid: number; fromName: string }
