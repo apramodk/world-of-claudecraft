@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import type { CharacterState } from '../src/sim/sim';
 import type { PlayerClass } from '../src/sim/types';
+import type { ChatLogRow } from './chat_log';
 
 try {
   process.loadEnvFile?.();
@@ -53,6 +54,17 @@ CREATE TABLE IF NOT EXISTS play_sessions (
 );
 CREATE INDEX IF NOT EXISTS play_sessions_account ON play_sessions(account_id);
 CREATE INDEX IF NOT EXISTS play_sessions_started ON play_sessions(started_at);
+CREATE TABLE IF NOT EXISTS chat_logs (
+  id BIGSERIAL PRIMARY KEY,
+  account_id INT REFERENCES accounts(id) ON DELETE SET NULL,
+  character_id INT REFERENCES characters(id) ON DELETE SET NULL,
+  character_name TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_logs_created ON chat_logs(created_at);
+CREATE INDEX IF NOT EXISTS chat_logs_character ON chat_logs(character_id, created_at);
 `;
 
 export async function ensureSchema(): Promise<void> {
@@ -173,5 +185,36 @@ export async function closePlaySession(sessionId: number): Promise<void> {
 // start time so they don't inflate playtime stats forever.
 export async function closeOrphanSessions(): Promise<number> {
   const res = await pool.query('UPDATE play_sessions SET ended_at = started_at WHERE ended_at IS NULL');
+  return res.rowCount ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Chat logs: one row per sent say/party message, written in batches by the
+// ChatLogger in game.ts. Name is denormalized so logs survive character
+// deletion (the FK goes NULL but the row keeps its meaning for moderation).
+// ---------------------------------------------------------------------------
+
+export async function insertChatLogs(rows: ChatLogRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  await pool.query(
+    `INSERT INTO chat_logs (account_id, character_id, character_name, channel, message)
+     SELECT * FROM unnest($1::int[], $2::int[], $3::text[], $4::text[], $5::text[])`,
+    [
+      rows.map((r) => r.accountId),
+      rows.map((r) => r.characterId),
+      rows.map((r) => r.characterName),
+      rows.map((r) => r.channel),
+      rows.map((r) => r.message),
+    ],
+  );
+}
+
+// Keeps the table bounded; CHAT_LOG_RETENTION_DAYS=0 disables pruning.
+export async function pruneChatLogs(retentionDays: number): Promise<number> {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const res = await pool.query(
+    `DELETE FROM chat_logs WHERE created_at < now() - ($1 || ' days')::interval`,
+    [String(Math.floor(retentionDays))],
+  );
   return res.rowCount ?? 0;
 }

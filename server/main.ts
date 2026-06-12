@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   ensureSchema, pool, createAccount, findAccount, touchLogin, saveToken, accountForToken,
   listCharacters, getCharacter, createCharacter, deleteCharacter, closeOrphanSessions,
+  pruneChatLogs,
 } from './db';
 import { hashPassword, verifyPassword, newToken, validUsername, validPassword, validCharName } from './auth';
 import { json, readBody } from './http_util';
@@ -15,6 +16,8 @@ import { cacheControlFor, etagFor, isNotModified } from './static_cache';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const STATIC_DIR = path.join(__dirname, '..', 'dist');
+// How long chat logs are kept (0 = forever); pruned at boot and daily.
+const CHAT_LOG_RETENTION_DAYS = Number(process.env.CHAT_LOG_RETENTION_DAYS ?? 90);
 
 const game = new GameServer();
 
@@ -197,6 +200,11 @@ async function main(): Promise<void> {
   await ensureSchema();
   const orphans = await closeOrphanSessions();
   if (orphans > 0) console.log(`closed ${orphans} orphaned play session(s) from a previous run`);
+  const pruned = await pruneChatLogs(CHAT_LOG_RETENTION_DAYS);
+  if (pruned > 0) console.log(`pruned ${pruned} chat log row(s) older than ${CHAT_LOG_RETENTION_DAYS} days`);
+  setInterval(() => {
+    void pruneChatLogs(CHAT_LOG_RETENTION_DAYS).catch((err) => console.error('chat log prune failed:', err));
+  }, 24 * 3600 * 1000).unref();
   console.log('database ready');
 
   const server = http.createServer((req, res) => {
@@ -291,6 +299,7 @@ async function main(): Promise<void> {
     game.stop();
     await game.saveAll('shutdown');
     await game.endAllPlaySessions();
+    await game.chatLog.stop();
     await pool.end();
     process.exit(0);
   };
