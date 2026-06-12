@@ -1,15 +1,15 @@
 #!/bin/bash
-# World of Claudecraft — Azure VM first-boot setup (cloud-init custom data).
+# World of Claudecraft — Azure ORIGIN VM first-boot setup (cloud-init custom data).
+# Runs the full stack: postgres + game (docker compose) + Caddy TLS.
 # Placeholders are substituted by deploy/azure-deploy.sh before launch.
 DOMAIN="__DOMAIN__"
-DATABASE_URL="__DATABASE_URL__"
-REGION="__REGION__"
 REPO="__REPO__"
 APP_DIR="/opt/eastbrook"
+BACKUP_DIR="/var/backups/eastbrook"
 
 set -euo pipefail
 exec > >(tee -a /var/log/eastbrook-setup.log) 2>&1
-echo "=== World of Claudecraft Azure setup started: $(date -u) ==="
+echo "=== World of Claudecraft Azure origin setup started: $(date -u) ==="
 
 # --- swap: builds on a small instance want the headroom ---------------------
 if [ ! -f /swapfile ]; then
@@ -28,20 +28,18 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
 apt-get update && apt-get install -y caddy
 systemctl enable --now docker
 
-# --- clone + env -------------------------------------------------------------
+# --- clone + secrets ---------------------------------------------------------
 [ -d "$APP_DIR" ] || git clone "$REPO" "$APP_DIR"
 cd "$APP_DIR"
-{
-  echo "DATABASE_URL=$DATABASE_URL"
-  echo "REGION=$REGION"
-  echo "POSTGRES_PASSWORD=unused-managed-db"
-} > .env
-chmod 600 .env
+if [ ! -f .env ]; then
+  echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+  chmod 600 .env
+fi
 
-# --- build + run (game only; the managed Flexible Server is the database) ---
-docker compose -f docker-compose.yml -f deploy/docker-compose.azure.yml up -d --build game
+# --- build + run the full stack (postgres + game) ----------------------------
+docker compose up -d --build
 
-# --- caddy: TLS reverse proxy on the free cloudapp.azure.com hostname --------
+# --- caddy: TLS reverse proxy (the west proxy relays here over HTTPS too) ---
 cat > /etc/caddy/Caddyfile <<CADDY
 $DOMAIN {
 	reverse_proxy localhost:8787
@@ -50,6 +48,18 @@ $DOMAIN {
 CADDY
 systemctl enable caddy && systemctl restart caddy
 
-# (no pg_dump cron — Flexible Server includes 7-day automated backups)
-echo "=== World of Claudecraft Azure setup finished: $(date -u) ==="
+# --- nightly DB backup (03:15 UTC, keeps 14 days) ----------------------------
+cat > /usr/local/bin/eastbrook-backup <<'BACKUP'
+#!/bin/bash
+set -euo pipefail
+BACKUP_DIR="/var/backups/eastbrook"
+mkdir -p "$BACKUP_DIR"
+docker exec eastbrook-db pg_dump -U eastbrook eastbrook \
+  | gzip > "$BACKUP_DIR/eastbrook-$(date +%F).sql.gz"
+find "$BACKUP_DIR" -name '*.sql.gz' -mtime +14 -delete
+BACKUP
+chmod +x /usr/local/bin/eastbrook-backup
+echo "15 3 * * * root /usr/local/bin/eastbrook-backup" > /etc/cron.d/eastbrook-backup
+
+echo "=== origin setup finished: $(date -u) ==="
 curl -s --max-time 5 http://localhost:8787/api/status || echo 'game not up yet — check: docker compose logs game'
