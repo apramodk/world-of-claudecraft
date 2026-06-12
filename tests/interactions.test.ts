@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handlePickedEntity } from '../src/game/interactions';
+import { cursorKindForEntity } from '../src/ui/cursors';
 import type { Entity } from '../src/sim/types';
 
 function player(): Entity {
@@ -99,5 +100,16 @@ describe('picked entity interactions', () => {
     expect(world.targetEntity).toHaveBeenCalledWith(mob.id);
     expect(hud.openLoot).toHaveBeenCalledWith(mob.id, 120, 160);
     expect(hud.showError).not.toHaveBeenCalled();
+  });
+});
+
+describe('cursorKindForEntity', () => {
+  it('picks the right cursor per entity kind', () => {
+    expect(cursorKindForEntity({ kind: 'npc', dead: false, hostile: false, lootable: false } as any)).toBe('talk');
+    expect(cursorKindForEntity({ kind: 'mob', dead: false, hostile: true, lootable: false } as any)).toBe('attack');
+    expect(cursorKindForEntity({ kind: 'mob', dead: true, hostile: true, lootable: true } as any)).toBe('loot');
+    expect(cursorKindForEntity({ kind: 'mob', dead: true, hostile: true, lootable: false } as any)).toBe(null);
+    expect(cursorKindForEntity({ kind: 'object', dead: false, hostile: false, lootable: false } as any)).toBe('interact');
+    expect(cursorKindForEntity({ kind: 'player', dead: false, hostile: false, lootable: false } as any)).toBe(null);
   });
 });

@@ -5,6 +5,7 @@ import { Hud } from './ui/hud';
 import { audio } from './game/audio';
 import { music } from './game/music';
 import { handlePickedEntity } from './game/interactions';
+import { applyCursor, cursorKindForEntity } from './ui/cursors';
 import { Api, ClientWorld, CharacterSummary } from './net/online';
 import type { IWorld } from './world_api';
 import { assetsReady } from './render/assets/preload';
@@ -211,12 +212,25 @@ async function startGame(world: IWorld, offlineSim: Sim | null, online: ClientWo
     lastInterpFacing = interpFacing; // track through mouselook too — no snap on release
   }
 
+  // context-sensitive cursor: throttled hover pick (~8/sec, raycast hits the
+  // invisible capsule proxies so it's cheap)
+  let lastHoverPickAt = 0;
+  function updateHoverCursor(now: number): void {
+    if (now - lastHoverPickAt < 120) return;
+    lastHoverPickAt = now;
+    if (input.leftDown || input.rightDown) { applyCursor(canvas, null); return; }
+    const id = renderer.pick(input.mouseX, input.mouseY);
+    const e = id !== null ? world.entities.get(id) : null;
+    applyCursor(canvas, e ? cursorKindForEntity(e) : null);
+  }
+
   function frame(now: number): void {
     requestAnimationFrame(frame);
     let frameDt = (now - last) / 1000;
     last = now;
     if (frameDt > 0.25) frameDt = 0.25;
 
+    updateHoverCursor(now);
     const mouselook = input.rightDown && !world.player.dead;
 
     if (offlineSim) {

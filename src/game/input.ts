@@ -19,6 +19,8 @@ export class Input {
   keys = new Set<string>();
   leftDown = false;
   rightDown = false;
+  mouseX = 0;
+  mouseY = 0;
   camYaw = Math.PI;
   camPitch = 0.32;
   camDist = 12;
@@ -74,7 +76,8 @@ export class Input {
     if (e.button === 2) this.rightDown = true;
     this.downButton = e.button;
     this.dragDistance = 0;
-    this.canvas.requestPointerLock?.();
+    // pointer lock is requested in onMouseMove once dragDistance > 5 —
+    // a plain click (target/interact) never grabs the pointer
   }
 
   private onMouseUp(e: MouseEvent): void {
@@ -91,9 +94,14 @@ export class Input {
   }
 
   private onMouseMove(e: MouseEvent): void {
+    this.mouseX = e.clientX;
+    this.mouseY = e.clientY;
     if (!this.leftDown && !this.rightDown) return;
     const mx = e.movementX ?? 0, my = e.movementY ?? 0;
     this.dragDistance += Math.abs(mx) + Math.abs(my);
+    if (this.dragDistance > 5 && !document.pointerLockElement) {
+      this.canvas.requestPointerLock?.();
+    }
     this.camYaw -= mx * 0.0045;
     this.camPitch = Math.min(1.35, Math.max(-0.4, this.camPitch + my * 0.0045));
   }
