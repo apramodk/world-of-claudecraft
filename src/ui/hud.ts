@@ -1088,19 +1088,24 @@ export class Hud {
     const el = $('#bags');
     const sim = this.sim;
     el.innerHTML = `<div class="panel-title"><span>Bags</span><span class="x-btn" data-close>✕</span></div>`;
+    // classic 4x4 slot grid: empty slots stay visible so the bag always reads
+    // as a bag, not a blank panel
+    const BAG_SLOTS = 16;
     const grid = document.createElement('div');
-    grid.className = 'bag-grid';
-    if (sim.inventory.length === 0) {
-      grid.innerHTML = `<div style="font-size:12px;color:#887c5c;padding:6px">Your bags are empty.</div>`;
-    }
-    for (const s of [...sim.inventory]) {
-      const item = ITEMS[s.itemId];
-      if (!item) continue;
-      const row = document.createElement('div');
-      row.className = 'bag-item';
-      const qColor = QUALITY_COLOR[item.quality ?? 'common'] ?? '#fff';
-      row.innerHTML = `${this.itemIcon(item)}<span style="color:${qColor}">${item.name}</span><span class="bi-count">${s.count > 1 ? 'x' + s.count : ''}</span>`;
-      row.addEventListener('click', () => {
+    grid.className = 'bag-slots';
+    const inv = [...sim.inventory];
+    for (let i = 0; i < Math.max(BAG_SLOTS, inv.length); i++) {
+      const s = inv[i];
+      const item = s ? ITEMS[s.itemId] : null;
+      const slot = document.createElement('div');
+      if (!s || !item) {
+        slot.className = 'bag-slot empty';
+        grid.appendChild(slot);
+        continue;
+      }
+      slot.className = 'bag-slot';
+      slot.innerHTML = `${this.itemIcon(item)}${s.count > 1 ? `<span class="bi-count">${s.count}</span>` : ''}`;
+      slot.addEventListener('click', () => {
         if (this.tradeOpen) {
           this.addItemToTrade(s.itemId);
         } else if (this.vendorOpen) {
@@ -1110,7 +1115,7 @@ export class Hud {
           this.renderBags();
         }
       });
-      this.attachTooltip(row, () => {
+      this.attachTooltip(slot, () => {
         let extra = '';
         if (this.tradeOpen) extra = '<div class="tt-sub">Click to offer in trade</div>';
         else if (this.vendorOpen) extra = '<div class="tt-sub">Click to sell</div>';
@@ -1118,7 +1123,7 @@ export class Hud {
         else if (item.kind === 'food' || item.kind === 'drink') extra = '<div class="tt-sub">Click to consume</div>';
         return this.itemTooltip(item) + extra;
       });
-      grid.appendChild(row);
+      grid.appendChild(slot);
     }
     el.appendChild(grid);
     const money = document.createElement('div');

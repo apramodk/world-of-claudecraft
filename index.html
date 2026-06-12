@@ -134,7 +134,8 @@
     box-shadow: inset 0 1px 0 #ffffff18, 0 2px 4px #0009; }
   .action-btn .icon-label { position: absolute; inset: 1px; border-radius: 4px;
     background-size: cover; background-position: center; background-repeat: no-repeat; pointer-events: none; }
-  .action-btn:hover { border-color: var(--gold); }
+  .action-btn:hover { border-color: var(--gold); box-shadow: 0 0 8px #ffd10055, inset 0 1px 0 #ffffff18; }
+  .action-btn:hover .icon-label { filter: brightness(1.2); }
   .action-btn:active { transform: translateY(1px); }
   .action-btn.empty { background: #0d0d13; cursor: default; box-shadow: inset 0 0 10px #000; }
   .action-btn .keybind { position: absolute; top: 1px; right: 3px; font-size: 9px; color: #ddd; font-family: var(--ui-font); }
@@ -145,10 +146,10 @@
   .action-btn.oor .icon-label { filter: brightness(0.55) saturate(0.4); }
   .action-btn.queued { border-color: #fff; box-shadow: 0 0 9px #ffd100cc, inset 0 1px 0 #ffffff18; }
   #side-buttons { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; }
-  .micro-btn { width: 34px; height: 30px; border: 2px solid #4a3d1d; border-radius: 5px;
+  .micro-btn { width: 38px; height: 34px; border: 2px solid #4a3d1d; border-radius: 5px;
     background: radial-gradient(circle at 35% 30%, #2c2c3a, #15151f); color: #d8c89a; cursor: pointer;
     font-size: 12px; font-weight: bold; box-shadow: inset 0 1px 0 #ffffff18, 0 2px 4px #0009; position: relative; }
-  .micro-btn:hover { border-color: var(--gold); color: #fff; }
+  .micro-btn:hover { border-color: var(--gold); color: #fff; box-shadow: 0 0 6px #ffd10044, inset 0 1px 0 #ffffff18; }
   .micro-btn .keybind { position: absolute; bottom: -1px; right: 2px; font-size: 8px; color: #998; }
 
   /* ---------- combat log ---------- */
@@ -257,11 +258,15 @@
   .vendor-hint { font-size: 11px; color: #c8b888; margin-top: 8px; border-top: 1px solid #463a1c; padding-top: 6px; }
 
   /* bags */
-  #bags { right: 12px; bottom: 64px; width: 310px; max-height: 60%; overflow-y: auto; }
-  .bag-grid { display: flex; flex-direction: column; gap: 2px; }
-  .bag-item { display: flex; gap: 8px; align-items: center; font-size: 12px; padding: 3px 4px; border-radius: 3px; cursor: pointer; }
-  .bag-item:hover { background: #ffffff12; }
-  .bag-item .bi-count { margin-left: auto; color: #ccc; }
+  #bags { right: 12px; bottom: 64px; width: 230px; max-height: 60%; overflow-y: auto; }
+  .bag-slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .bag-slot { position: relative; aspect-ratio: 1; border: 1px solid #4a3d1d; border-radius: 4px;
+    background: radial-gradient(circle at 35% 30%, #1b1b26, #0d0d13); display: flex;
+    align-items: center; justify-content: center; cursor: pointer; }
+  .bag-slot.empty { cursor: default; box-shadow: inset 0 0 8px #000; }
+  .bag-slot:not(.empty):hover { border-color: var(--gold); }
+  .bag-slot .item-icon { width: 90%; height: 90%; }
+  .bag-slot .bi-count { position: absolute; right: 2px; bottom: 1px; font-size: 10px; color: #fff; text-shadow: 1px 1px 1px #000; }
   .money { margin-top: 8px; font-size: 12px; color: var(--gold); text-align: right; }
   .coin { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-left: 6px; margin-right: 2px; }
   .coin.g { background: radial-gradient(circle at 35% 30%, #ffe98a, #b8860b); }
