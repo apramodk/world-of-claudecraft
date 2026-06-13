@@ -388,9 +388,10 @@ export const ZONE1_QUEST_ORDER = [
 // ---------------------------------------------------------------------------
 
 export const ZONE1_CAMPS: CampDef[] = [
-  // Wolves: north woods
-  { mobId: 'forest_wolf', center: { x: -15, z: 55 }, radius: 22, count: 7 },
-  { mobId: 'forest_wolf', center: { x: 20, z: 70 }, radius: 20, count: 6 },
+  // Wolves: north woods — two camps kept apart so there's a clear lane of
+  // approach between them and lone wolves wander the fringes (pullable solo)
+  { mobId: 'forest_wolf', center: { x: -28, z: 50 }, radius: 18, count: 6 },
+  { mobId: 'forest_wolf', center: { x: 30, z: 72 }, radius: 18, count: 6 },
   { mobId: 'old_greyjaw', center: { x: 0, z: 95 }, radius: 8, count: 1 },
   // Boars: east meadow
   { mobId: 'wild_boar', center: { x: 55, z: 12 }, radius: 22, count: 6 },

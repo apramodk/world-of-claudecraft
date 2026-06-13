@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Sim } from '../src/sim/sim';
-import { ALL_CLASSES, MAX_LEVEL, dist2d } from '../src/sim/types';
+import { ALL_CLASSES, MAX_LEVEL, dist2d, mobXpValue } from '../src/sim/types';
 import { CLASSES, MOBS, abilitiesKnownAt, instanceOrigin, CRYPT_SPAWNS } from '../src/sim/data';
 import { groundHeight } from '../src/sim/world';
 
@@ -226,6 +226,10 @@ describe('parties', () => {
     sim.acceptQuest('q_wolves', a);
     sim.acceptQuest('q_wolves', b);
     const wolf = nearestMob(sim, 'forest_wolf');
+    // pin level (wolves roll 1-2; spawn RNG must not decide the assertion). A
+    // lvl-2 mob vs lvl-1 player = 58 xp (55 base * 1.05 level-diff). A 2-person
+    // party gets NO group bonus (that starts at 3), so each gets a 58/2 = 29 split.
+    wolf.level = 2;
     wolf.hp = 1;
     teleport(sim, a, wolf.pos.x + 2, wolf.pos.z);
     teleport(sim, b, wolf.pos.x - 2, wolf.pos.z);
@@ -239,10 +243,10 @@ describe('parties', () => {
     expect(wolf.dead).toBe(true);
     const metaA = sim.meta(a)!;
     const metaB = sim.meta(b)!;
-    // both got xp (half of solo, with 1.166 duo bonus applied)
+    // both got an even split of the kill xp (58 for a lvl-2 wolf, /2 = 29)
     expect(metaA.xp).toBeGreaterThan(0);
     expect(metaB.xp).toBeGreaterThan(0);
-    expect(metaA.xp).toBe(Math.round((50 * 1.166) / 2));
+    expect(metaA.xp).toBe(Math.round(mobXpValue(2, 1) / 2));
     // both got quest credit
     expect(metaA.questLog.get('q_wolves')!.counts[0]).toBe(1);
     expect(metaB.questLog.get('q_wolves')!.counts[0]).toBe(1);

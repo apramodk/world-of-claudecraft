@@ -280,7 +280,11 @@ class GameClient {
   // bail (run back the way we came) if HP gets low or a second mob joins in.
   async fight(targetId: number, openerSlots: number[]): Promise<string> {
     if (!this.connected || !this.self) throw new Error('not in world');
-    const retreat = { x: this.self.x, z: this.self.z };
+    // kite/retreat anchor: a point ~22yd back toward town (open ground), so the
+    // wolf gets pulled OUT of its pack instead of the fight happening inside it
+    const ang = Math.atan2(0 - this.self.x, 0 - this.self.z);
+    const retreat = { x: this.self.x + Math.sin(ang) * 22, z: this.self.z + Math.cos(ang) * 22 };
+    const caster = (this.self.mres ?? 0) > 0; // casters kite; melee toe-to-toe
     this.cmd({ cmd: 'target', id: targetId });
     this.cmd({ cmd: 'attack' });
     const start = Date.now();
@@ -288,23 +292,37 @@ class GameClient {
     while (this.connected && !this.self.dead) {
       const t = this.ents.get(targetId);
       if (!t || t.dead) {
+        this.mi.f = 0;
         if (t?.dead && t.loot) { this.cmd({ cmd: 'loot', id: targetId }); await sleep(400); }
         return `killed #${targetId}${t?.loot ? ' and looted it' : ''}`;
       }
-      // survival: low HP, or 2+ extra hostiles piling on = disengage. One
-      // straggler is tolerated (a glass cannon can still drop a single add).
+      // survival: bail if HP gets low, or a SECOND wolf is actually on you
+      // (within 9yd — mobs milling at 12yd aren't hitting you). Kiting toward
+      // the safe origin keeps the fight away from the pack.
       const hpFrac = this.self.hp / this.self.mhp;
-      const adds = [...this.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.h && e.id !== targetId && d2(e, this.self) < 14);
-      if (hpFrac < 0.35 || adds.length >= 2) {
+      const onMe = [...this.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.h && e.id !== targetId && d2(e, this.self) < 9);
+      if (hpFrac < 0.45 || onMe.length >= 1) {
+        this.mi.f = 0;
         this.cmd({ cmd: 'stopattack' });
-        const why = adds.length >= 2 ? `${adds.length} mobs piled on` : `HP got low (${this.self.hp}/${this.self.mhp})`;
+        const why = onMe.length ? `a second wolf closed in` : `HP got low (${this.self.hp}/${this.self.mhp})`;
         await this.moveTo(retreat.x, retreat.z, 3);
-        return `broke off the fight — ${why}; retreated to safety`;
+        return `broke off — ${why}; pulled back to safety (hp ${this.self.hp}/${this.self.mhp})`;
       }
-      // weave an opener off cooldown
+      // fire an ability (instants land immediately; the nuke is the kill)
       if (openerSlots.length) { this.cmd({ cmd: 'castSlot', slot: openerSlots[slotI % openerSlots.length] }); slotI++; }
-      if (Date.now() - start > 40_000) { this.cmd({ cmd: 'stopattack' }); return `fight with #${targetId} dragged on past 40s — disengaging`; }
-      await sleep(1100);
+      if (Date.now() - start > 45_000) { this.mi.f = 0; this.cmd({ cmd: 'stopattack' }); return `fight with #${targetId} dragged on past 45s — disengaging`; }
+      // KITE (casters) TOWARD the safe origin: when the wolf reaches melee,
+      // stutter-step back to where you pulled from (away from the pack, not
+      // deeper into it). A 54-hp mage kills the wolf as it chases your nukes.
+      if (caster && d2(t, this.self) < 8 && d2(this.self, retreat) > 3) {
+        this.facing = Math.atan2(retreat.x - this.self.x, retreat.z - this.self.z); // toward safety
+        this.mi.f = 1;
+        await sleep(1100);
+        this.mi.f = 0;
+        await sleep(900);    // stop, let the next cast land
+      } else {
+        await sleep(1100);
+      }
     }
     return this.self?.dead ? `died fighting #${targetId}` : 'fight ended';
   }

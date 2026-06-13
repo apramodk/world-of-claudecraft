@@ -195,15 +195,34 @@ export class Sim {
     }
 
     // Mobs from camps
+    // keep mobs at least this far apart at spawn so every one is individually
+    // pullable — without it, uniform-random placement (and overlapping camps)
+    // stacks mobs on top of each other and nothing can be pulled solo
+    const MIN_MOB_SPACING = 11;
+    const placed: { x: number; z: number }[] = [];
+    const minDistToPlaced = (x: number, z: number): number => {
+      let m = Infinity;
+      for (const p of placed) { const d = Math.hypot(p.x - x, p.z - z); if (d < m) m = d; }
+      return m;
+    };
     for (const camp of CAMPS) {
       const template = MOBS[camp.mobId];
       // murlocs may wade in the shallows; everyone else spawns on dry land
       const minHeight = template.family === 'murloc' ? WATER_LEVEL - 0.5 : WATER_LEVEL + 0.4;
       for (let i = 0; i < camp.count; i++) {
-        const ang = this.rng.range(0, Math.PI * 2);
-        const r = Math.sqrt(this.rng.next()) * camp.radius;
-        const safe = this.findSafePos(camp.center.x + Math.sin(ang) * r, camp.center.z + Math.cos(ang) * r, minHeight);
-        const pos = this.groundPos(safe.x, safe.z);
+        // rejection-sample: take the first spot that clears MIN_MOB_SPACING from
+        // every already-placed mob; if the camp is too tight, keep the roomiest
+        let best = { x: camp.center.x, z: camp.center.z }, bestGap = -1;
+        for (let tries = 0; tries < 24; tries++) {
+          const ang = this.rng.range(0, Math.PI * 2);
+          const r = Math.sqrt(this.rng.next()) * camp.radius;
+          const safe = this.findSafePos(camp.center.x + Math.sin(ang) * r, camp.center.z + Math.cos(ang) * r, minHeight);
+          const gap = minDistToPlaced(safe.x, safe.z);
+          if (gap >= MIN_MOB_SPACING) { best = safe; bestGap = gap; break; }
+          if (gap > bestGap) { best = safe; bestGap = gap; }
+        }
+        placed.push({ x: best.x, z: best.z });
+        const pos = this.groundPos(best.x, best.z);
         const level = this.rng.int(template.minLevel, template.maxLevel);
         const mob = createMob(this.nextId++, template, level, pos);
         mob.facing = this.rng.range(-Math.PI, Math.PI);
