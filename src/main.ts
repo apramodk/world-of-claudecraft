@@ -441,4 +441,31 @@ function wireStartScreens(): void {
   $('#btn-charselect-back').addEventListener('click', () => show('#login-panel'));
 }
 
-wireStartScreens();
+// ?spectate=Name — read-only POV camera for streams: boots straight into the
+// world mirroring an allowlisted character. No account, no input sent.
+function enterSpectate(name: string): void {
+  if (!beginWorldEntry()) return;
+  audio.init(); // may be blocked without a gesture; stream boxes pass --autoplay-policy
+  music.init();
+  showLoadingScreen(`Tuning in to ${name}…`);
+  const world = new ClientWorld('', -1, 'warrior', name);
+  const waitStart = Date.now();
+  const poll = setInterval(() => {
+    if (world.connected && world.entities.has(world.playerId)) {
+      clearInterval(poll);
+      void startGame(world, null, world);
+    } else if (Date.now() - waitStart > 10000) {
+      clearInterval(poll);
+      world.close();
+      fatalOverlay(`Could not tune in to ${name} — are they online?`);
+    }
+  }, 50);
+  world.onDisconnect = (reason) => {
+    clearInterval(poll);
+    fatalOverlay(reason);
+  };
+}
+
+const spectateName = new URLSearchParams(location.search).get('spectate');
+if (spectateName) enterSpectate(spectateName);
+else wireStartScreens();

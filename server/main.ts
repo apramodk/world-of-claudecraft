@@ -235,6 +235,24 @@ async function main(): Promise<void> {
       return;
     }
 
+    // read-only POV spectator (stream cameras): no account needed, but only
+    // characters explicitly allowlisted via OBSERVABLE_CHARACTERS are watchable
+    if (typeof msg.observe === 'string') {
+      const allowed = (process.env.OBSERVABLE_CHARACTERS ?? '')
+        .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      if (!allowed.includes(msg.observe.toLowerCase())) {
+        ws.send(JSON.stringify({ t: 'error', error: 'that character cannot be observed' }));
+        ws.close();
+        return;
+      }
+      const result = game.joinObserver(ws, msg.observe);
+      if ('error' in result) {
+        ws.send(JSON.stringify({ t: 'error', error: result.error }));
+        ws.close();
+      }
+      return; // observers send nothing further; no message handlers bound
+    }
+
     const token = typeof msg.token === 'string' ? msg.token : '';
     const characterId = Number(msg.character ?? 'NaN');
     const accountId = await accountForToken(token);

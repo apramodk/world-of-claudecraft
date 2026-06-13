@@ -133,11 +133,15 @@ export class ClientWorld implements IWorld {
   private mouselookFacing: number | null = null;
   private sendTimer: number | undefined;
 
-  constructor(token: string, characterId: number, cls: PlayerClass) {
+  // observeName: read-only spectator mode — auths with {observe} instead of a
+  // token and streams no input (used by ?spectate=Name for stream cameras)
+  constructor(token: string, characterId: number, cls: PlayerClass, observeName?: string) {
     this.cfg = { seed: 20061, playerClass: cls };
     this.ws = new WebSocket(buildWebSocketUrl(location.protocol, location.host));
     this.ws.onopen = () => {
-      this.ws.send(JSON.stringify(buildWebSocketAuthMessage(token, characterId)));
+      this.ws.send(JSON.stringify(observeName
+        ? { t: 'auth', observe: observeName }
+        : buildWebSocketAuthMessage(token, characterId)));
     };
     this.ws.onmessage = (ev) => this.onMessage(String(ev.data));
     this.ws.onclose = () => {
@@ -145,8 +149,8 @@ export class ClientWorld implements IWorld {
       clearInterval(this.sendTimer);
       this.onDisconnect?.('Connection to the server was lost.');
     };
-    // input stream at sim rate
-    this.sendTimer = window.setInterval(() => this.sendInput(), 50);
+    // input stream at sim rate (spectators are read-only)
+    if (!observeName) this.sendTimer = window.setInterval(() => this.sendInput(), 50);
   }
 
   close(): void {
@@ -204,6 +208,7 @@ export class ClientWorld implements IWorld {
     if (msg.t === 'hello') {
       this.playerId = msg.pid;
       this.cfg.seed = msg.seed;
+      if (typeof msg.cls === 'string') this.cfg.playerClass = msg.cls as PlayerClass; // observers learn the class here
       this.connected = true;
       return;
     }

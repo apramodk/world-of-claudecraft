@@ -30,6 +30,8 @@ services:
     environment:
       DATABASE_URL: postgres://eastbrook:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env. See .env.example.}@postgres:5432/eastbrook
       PORT: "8787"
+      # comma-separated character names whose POV may be spectated (?spectate=)
+      OBSERVABLE_CHARACTERS: ${OBSERVABLE_CHARACTERS:-}
     # loopback-only: the TLS reverse proxy (Caddy) is the public entrance
     ports:
       - "127.0.0.1:8787:8787"

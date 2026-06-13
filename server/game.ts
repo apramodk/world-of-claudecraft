@@ -27,6 +27,14 @@ export interface ClientSession {
   lastSent: Record<string, string>;
 }
 
+// Read-only spectator mirroring one player's POV (e.g. for a stream overlay):
+// receives that player's exact snapshots and events, may send nothing.
+export interface ObserverSession {
+  ws: WebSocket;
+  pid: number; // the observed player's entity id
+  lastSent: Record<string, string>;
+}
+
 export interface AdminServerStats {
   online: number;
   peakOnline: number;
@@ -98,6 +106,7 @@ function round2(v: number): number {
 export class GameServer {
   sim: Sim;
   clients = new Map<number, ClientSession>(); // by pid
+  observers = new Set<ObserverSession>(); // read-only POV mirrors
   private interval: NodeJS.Timeout | null = null;
   private saveTimer = 0;
   private readonly startedAt = Date.now();
@@ -173,9 +182,35 @@ export class GameServer {
     return session;
   }
 
+  // Attach a read-only spectator to a named online player's POV. The socket
+  // receives that player's snapshots/events verbatim; anything it sends is
+  // ignored. Used for stream cameras (?spectate=Name in the web client).
+  joinObserver(ws: WebSocket, characterName: string): ObserverSession | { error: string } {
+    const target = [...this.clients.values()].find((c) => c.name.toLowerCase() === characterName.toLowerCase());
+    if (!target) return { error: `${characterName} is not online` };
+    const meta = this.sim.meta(target.pid);
+    const obs: ObserverSession = { ws, pid: target.pid, lastSent: {} };
+    this.observers.add(obs);
+    ws.send(JSON.stringify({
+      t: 'hello',
+      pid: target.pid,
+      seed: this.sim.cfg.seed,
+      name: target.name,
+      cls: meta?.cls ?? 'warrior',
+      observer: 1,
+    }));
+    ws.on('close', () => this.observers.delete(obs));
+    return obs;
+  }
+
   async leave(session: ClientSession, reason: string): Promise<void> {
     if (!this.clients.has(session.pid)) return;
     this.clients.delete(session.pid);
+    for (const obs of this.observers) {
+      if (obs.pid !== session.pid) continue;
+      try { obs.ws.send(JSON.stringify({ t: 'error', error: `${session.name} logged out` })); obs.ws.close(); } catch { /* gone */ }
+      this.observers.delete(obs);
+    }
     if (session.dbSessionId !== null) {
       void closePlaySession(session.dbSessionId).catch((err) => console.error('failed to close play session:', err));
     }
@@ -415,9 +450,28 @@ export class GameServer {
       });
       this.sendRaw(session, `${head},"self":${this.selfWireJson(session, p, meta)},"ents":[${ents.join(',')}]}`);
     }
+    // observers get the observed player's POV with their own delta tracking
+    for (const obs of this.observers) {
+      const p = this.sim.entities.get(obs.pid);
+      const meta = this.sim.meta(obs.pid);
+      if (!p || !meta) continue;
+      const ents: string[] = [];
+      this.sim.grid.forEachInRadius(p.pos.x, p.pos.z, INTEREST_RADIUS, (e) => {
+        if (e.id === obs.pid) return;
+        let json = entJson.get(e.id);
+        if (json === undefined) {
+          json = JSON.stringify(wireEntity(e));
+          entJson.set(e.id, json);
+        }
+        ents.push(json);
+      });
+      try {
+        obs.ws.send(`${head},"self":${this.selfWireJson(obs, p, meta)},"ents":[${ents.join(',')}]}`);
+      } catch { this.observers.delete(obs); }
+    }
   }
 
-  private selfWireJson(session: ClientSession, p: Entity, meta: PlayerMeta): string {
+  private selfWireJson(session: { pid: number; lastSent: Record<string, string> }, p: Entity, meta: PlayerMeta): string {
     const self = wireEntity(p);
     Object.assign(self, {
       res: Math.round(p.resource * 10) / 10,
@@ -520,6 +574,22 @@ export class GameServer {
         if (anchor === null || dist2d(p.pos, anchor) <= EVENT_RADIUS) mine.push(ev);
       }
       if (mine.length > 0) this.send(session, { t: 'events', list: mine });
+    }
+    for (const obs of this.observers) {
+      const p = this.sim.entities.get(obs.pid);
+      if (!p) continue;
+      const mine: SimEvent[] = [];
+      for (const ev of events) {
+        if (ev.pid !== undefined) {
+          if (ev.pid === obs.pid) mine.push(ev);
+          continue;
+        }
+        const anchor = this.eventAnchor(ev);
+        if (anchor === null || dist2d(p.pos, anchor) <= EVENT_RADIUS) mine.push(ev);
+      }
+      if (mine.length > 0) {
+        try { obs.ws.send(JSON.stringify({ t: 'events', list: mine })); } catch { this.observers.delete(obs); }
+      }
     }
   }
 
