@@ -267,12 +267,13 @@ class GameClient {
         if (t?.dead && t.loot) { this.cmd({ cmd: 'loot', id: targetId }); await sleep(400); }
         return `killed #${targetId}${t?.loot ? ' and looted it' : ''}`;
       }
-      // survival: low HP, or an extra hostile mob got close = disengage
+      // survival: low HP, or 2+ extra hostiles piling on = disengage. One
+      // straggler is tolerated (a glass cannon can still drop a single add).
       const hpFrac = this.self.hp / this.self.mhp;
-      const adds = [...this.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.h && e.id !== targetId && d2(e, this.self) < 16);
-      if (hpFrac < 0.35 || adds.length) {
+      const adds = [...this.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.h && e.id !== targetId && d2(e, this.self) < 14);
+      if (hpFrac < 0.35 || adds.length >= 2) {
         this.cmd({ cmd: 'stopattack' });
-        const why = adds.length ? `a second mob (${adds[0].nm}) joined in` : `HP got low (${this.self.hp}/${this.self.mhp})`;
+        const why = adds.length >= 2 ? `${adds.length} mobs piled on` : `HP got low (${this.self.hp}/${this.self.mhp})`;
         await this.moveTo(retreat.x, retreat.z, 3);
         return `broke off the fight — ${why}; retreated to safety`;
       }
@@ -328,17 +329,28 @@ function compass(dx: number, dz: number): string {
 }
 
 const d2 = (a: any, b: any) => Math.hypot(a.x - b.x, a.z - b.z);
-const SAFE_RADIUS = 22; // a target with no other mob this close = no adds
+const SAFE_RADIUS = 13; // another mob within this of the target may join the pull
 
-// alive hostile mobs in view, level <= mine, with no other living mob within
-// SAFE_RADIUS — i.e. things this glass-cannon mage can actually kill solo
-function safeTargets(): any[] {
+// count of OTHER living mobs within SAFE_RADIUS of a candidate (its "adds")
+function addsNear(target: any): number {
+  return [...game.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.id !== target.id && d2(e, target) < SAFE_RADIUS).length;
+}
+
+// huntable hostile mobs (<= my level) ranked by fewest adds, then nearest. In a
+// wolf-packed zone nothing is perfectly isolated, so we rank rather than reject
+// — hunt then takes the least-crowded edge straggler.
+function rankedTargets(): { e: any; adds: number }[] {
   const me = game.self;
   if (!me) return [];
-  const mobs = [...game.ents.values()].filter((e) => e.k === 'mob' && !e.dead);
-  return mobs
-    .filter((e) => e.h && e.lv <= me.lv && !mobs.some((o) => o.id !== e.id && d2(o, e) < SAFE_RADIUS))
-    .sort((a, b) => d2(a, me) - d2(b, me));
+  return [...game.ents.values()]
+    .filter((e) => e.k === 'mob' && !e.dead && e.h && e.lv <= me.lv)
+    .map((e) => ({ e, adds: addsNear(e) }))
+    .sort((a, b) => a.adds - b.adds || d2(a.e, me) - d2(b.e, me));
+}
+
+// truly safe (zero-add) targets — used by the status line
+function safeTargets(): any[] {
+  return rankedTargets().filter((t) => t.adds === 0).map((t) => t.e);
 }
 
 function nearestThreat(): any | null {
@@ -630,17 +642,21 @@ server.tool(
     if (!game.self) return text('join a world first');
     if (game.self.dead) return text('you are dead — release_spirit first');
     let target = entity_id ?? null;
+    let adds = 0;
     if (target == null) {
-      const safe = safeTargets();
-      if (!safe.length) return text('no safe targets in view — nothing hostile at your level without adds nearby. goto "wolves" (or another mob area), or rest/socialize.\n' + statusLine());
-      target = safe[0].id;
+      const ranked = rankedTargets();
+      if (!ranked.length) return text('no huntable mobs in view (nothing hostile at your level). goto "wolves" / "boars" to find some, or rest/socialize.\n' + statusLine());
+      // take the least-crowded; refuse only if even the best is a bad pull
+      if (ranked[0].adds >= 2) return text(`it's too crowded here — the clearest target still has ${ranked[0].adds} mobs hugging it. Move to the edge of the pack (move_to a spot away from the cluster) or goto a different area, then hunt again.\n${statusLine()}`);
+      target = ranked[0].e.id;
+      adds = ranked[0].adds;
     }
     const e = game.ents.get(target);
     if (!e) return text(`#${target} not in view`);
     const approach = await game.moveTo(e.x, e.z, 4);
     if (/stuck|gave up/.test(approach)) return text(`couldn't reach #${target}: ${approach}`);
     const result = await game.fight(target, opener_slots);
-    return text(`hunt: ${result}`);
+    return text(`hunt${adds ? ` (1 mob was nearby — watched for adds)` : ''}: ${result}`);
   },
 );
 
