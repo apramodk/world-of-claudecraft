@@ -25,8 +25,16 @@ export class Input {
   camPitch = 0.32;
   camDist = 12;
   autorun = false;
+  // toggle mouselook (backtick): mouse steers without holding a button,
+  // like holding right-click permanently. Esc or backtick exits.
+  mouselookToggle = false;
   private dragDistance = 0;
   private downButton = -1;
+
+  // true whenever the character should turn with the mouse
+  get mouselooking(): boolean {
+    return this.rightDown || this.mouselookToggle;
+  }
 
   constructor(private canvas: HTMLCanvasElement, private cb: InputCallbacks) {
     window.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -40,6 +48,18 @@ export class Input {
       this.camDist = Math.min(22, Math.max(3, this.camDist + Math.sign(e.deltaY) * 1.4));
     }, { passive: false });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // the browser force-exits pointer lock on Esc — keep the toggle in sync
+    document.addEventListener('pointerlockchange', () => {
+      if (this.mouselookToggle && document.pointerLockElement !== this.canvas) {
+        this.mouselookToggle = false;
+      }
+    });
+  }
+
+  private setMouselookToggle(on: boolean): void {
+    this.mouselookToggle = on;
+    if (on) this.canvas.requestPointerLock?.();
+    else if (document.pointerLockElement === this.canvas) document.exitPointerLock();
   }
 
   private onKeyDown(e: KeyboardEvent): void {
@@ -66,6 +86,7 @@ export class Input {
       case 'Enter': case 'NumpadEnter': this.cb.onUiKey('chat'); return;
       case 'Escape': this.cb.onUiKey('escape'); return;
       case 'NumLock': case 'KeyR': this.autorun = !this.autorun; return;
+      case 'Backquote': this.setMouselookToggle(!this.mouselookToggle); return;
     }
     this.keys.add(e.code);
     if (['KeyW', 'KeyS', 'ArrowUp', 'ArrowDown'].includes(e.code)) this.autorun = false;
@@ -84,10 +105,12 @@ export class Input {
     const wasDrag = this.dragDistance > 5;
     if (e.button === 0) this.leftDown = false;
     if (e.button === 2) this.rightDown = false;
-    if (!this.leftDown && !this.rightDown && document.pointerLockElement) {
+    if (!this.leftDown && !this.rightDown && !this.mouselookToggle && document.pointerLockElement) {
       document.exitPointerLock();
     }
-    if (!wasDrag && e.button === this.downButton && (e.target === this.canvas || document.pointerLockElement === this.canvas)) {
+    // no click-picking while toggled mouselook: the pointer is locked, so
+    // clientX/Y is frozen and there is no cursor to pick with
+    if (!wasDrag && !this.mouselookToggle && e.button === this.downButton && (e.target === this.canvas || document.pointerLockElement === this.canvas)) {
       this.cb.onClickPick(e.clientX, e.clientY, e.button);
     }
     this.downButton = -1;
@@ -96,11 +119,13 @@ export class Input {
   private onMouseMove(e: MouseEvent): void {
     this.mouseX = e.clientX;
     this.mouseY = e.clientY;
-    if (!this.leftDown && !this.rightDown) return;
+    if (!this.leftDown && !this.rightDown && !this.mouselookToggle) return;
     const mx = e.movementX ?? 0, my = e.movementY ?? 0;
-    this.dragDistance += Math.abs(mx) + Math.abs(my);
-    if (this.dragDistance > 5 && !document.pointerLockElement) {
-      this.canvas.requestPointerLock?.();
+    if (this.leftDown || this.rightDown) {
+      this.dragDistance += Math.abs(mx) + Math.abs(my);
+      if (this.dragDistance > 5 && !document.pointerLockElement) {
+        this.canvas.requestPointerLock?.();
+      }
     }
     this.camYaw -= mx * 0.0045;
     this.camPitch = Math.min(1.35, Math.max(-0.4, this.camPitch + my * 0.0045));

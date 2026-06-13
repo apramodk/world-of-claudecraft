@@ -147,6 +147,7 @@ zone map.
 |---|---|
 | `W`/`S` | run / backpedal — `A`/`D` turn (strafe while right mouse held), `Q`/`E` strafe |
 | right-drag / left-drag | mouselook / orbit camera &nbsp;·&nbsp; wheel zooms · `Space` jumps |
+| `` ` `` | toggle mouselook — mouse steers without holding a button (`Esc` exits) |
 | `Tab` | cycle nearest enemies · left-click target · right-click attack/loot/talk |
 | `1`–`9`, `0`, `-`, `=` | action bar |
 | `F` | interact (loot corpse / pick up object / talk) |

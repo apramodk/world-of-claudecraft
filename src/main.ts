@@ -199,7 +199,7 @@ async function startGame(world: IWorld, offlineSim: Sim | null, online: ClientWo
   }
 
   function updateCamera(frameDt: number, interpFacing: number): void {
-    if (!input.rightDown) {
+    if (!input.mouselooking) {
       // follow turns 1:1 (keeps any manual orbit offset constant)
       if (lastInterpFacing !== null) input.camYaw += wrapAngle(interpFacing - lastInterpFacing);
       // settle behind the character while moving, unless the player is
@@ -218,7 +218,7 @@ async function startGame(world: IWorld, offlineSim: Sim | null, online: ClientWo
   function updateHoverCursor(now: number): void {
     if (now - lastHoverPickAt < 120) return;
     lastHoverPickAt = now;
-    if (input.leftDown || input.rightDown) { applyCursor(canvas, null); return; }
+    if (input.leftDown || input.rightDown || input.mouselookToggle) { applyCursor(canvas, null); return; }
     const id = renderer.pick(input.mouseX, input.mouseY);
     const e = id !== null ? world.entities.get(id) : null;
     applyCursor(canvas, e ? cursorKindForEntity(e) : null);
@@ -231,7 +231,7 @@ async function startGame(world: IWorld, offlineSim: Sim | null, online: ClientWo
     if (frameDt > 0.25) frameDt = 0.25;
 
     updateHoverCursor(now);
-    const mouselook = input.rightDown && !world.player.dead;
+    const mouselook = input.mouselooking && !world.player.dead;
 
     if (offlineSim) {
       acc += frameDt;
