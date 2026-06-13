@@ -48,7 +48,6 @@ CREATE INDEX IF NOT EXISTS characters_account ON characters(account_id);
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS is_gm BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS online_region TEXT;
-ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT 'default';
 CREATE TABLE IF NOT EXISTS play_sessions (
   id SERIAL PRIMARY KEY,
   account_id INT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -59,6 +58,7 @@ CREATE TABLE IF NOT EXISTS play_sessions (
 );
 CREATE INDEX IF NOT EXISTS play_sessions_account ON play_sessions(account_id);
 CREATE INDEX IF NOT EXISTS play_sessions_started ON play_sessions(started_at);
+ALTER TABLE play_sessions ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT 'default';
 `;
 
 export async function ensureSchema(): Promise<void> {
