@@ -11,11 +11,19 @@ cd "$ROOT"
 mkdir -p tmp
 LOG="tmp/resident_bot.log"
 
-# single-instance guard: kill any prior Haikubot bot processes (orphaned MCP
-# servers / claude loops) so we never run two — duplicates fight over the one
-# character via the server's force-takeover and ping-pong each other offline
+# single-instance lock: only ONE live_bot may run — multiple loops fight over
+# the one character via the server's force-takeover and desync each other (the
+# bot perceives "every action desyncs me"). A pidfile lock prevents a second
+# loop; we also sweep any orphaned MCP servers from a prior unclean exit.
+LOCK="tmp/live_bot.lock"
+if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
+  echo "another live_bot (pid $(cat "$LOCK")) is already running — exiting" >> "$LOG"
+  exit 0
+fi
+echo $$ > "$LOCK"
+trap 'rm -f "$LOCK"' EXIT
 if command -v powershell.exe > /dev/null; then
-  powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -match 'claudecraft-mcp\.mjs' -and \$_.ProcessId -ne $$ } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" 2>/dev/null || true
+  powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -match 'claudecraft-mcp\.mjs' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" 2>/dev/null || true
   sleep 2
 fi
 
