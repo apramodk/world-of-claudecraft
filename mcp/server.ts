@@ -97,6 +97,7 @@ class GameClient {
   self: any = null;
   ents = new Map<number, any>();
   events: any[] = [];
+  unreadChat: any[] = [];
   private inputTimer: ReturnType<typeof setInterval> | null = null;
   private mi = { f: 0, b: 0, tl: 0, tr: 0, sl: 0, sr: 0, j: 0 };
   private facing: number | null = null;
@@ -161,6 +162,12 @@ class GameClient {
         } else if (msg.t === 'events') {
           this.events.push(...msg.list);
           if (this.events.length > 300) this.events.splice(0, this.events.length - 300);
+          // chat rides a separate unread buffer that piggybacks on EVERY tool
+          // result — the agent can't miss a player talking to it mid-fight
+          for (const ev of msg.list) {
+            if (ev.type === 'chat' && ev.from !== this.charName) this.unreadChat.push(ev);
+          }
+          if (this.unreadChat.length > 50) this.unreadChat.splice(0, this.unreadChat.length - 50);
         }
       });
       this.ws.on('error', (err) => { clearTimeout(to); reject(err); });
@@ -323,7 +330,15 @@ function buildLook(radius: number): string {
   return lines.join('\n');
 }
 
-function text(s: string) { return { content: [{ type: 'text' as const, text: s }] }; }
+function text(s: string) {
+  // append unread player chat to every tool result so it's never missed
+  if (game.unreadChat.length) {
+    const lines = game.unreadChat.map((c) => `  ${c.from}${c.channel && c.channel !== 'say' ? ` [${c.channel}]` : ''}: ${c.text}`);
+    game.unreadChat = [];
+    s += `\n\n[players are talking — respond if it concerns you]\n${lines.join('\n')}`;
+  }
+  return { content: [{ type: 'text' as const, text: s }] };
+}
 
 // ---------------------------------------------------------------------------
 // MCP tools
@@ -420,6 +435,7 @@ server.tool(
   async ({ seconds }) => {
     await sleep(seconds * 1000);
     const evts = game.drainEvents();
+    game.unreadChat = []; // listen displays chat itself; don't re-append via text()
     const chat = evts.filter((e) => e.type === 'chat');
     const lines = chat.map((c) => `${c.from}${c.channel && c.channel !== 'say' ? ` [${c.channel}]` : ''}: ${c.text}`);
     return text(lines.length
