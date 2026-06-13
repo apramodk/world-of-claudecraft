@@ -19,6 +19,27 @@ import { QUESTS, ITEMS, zoneAt } from '../src/sim/data';
 
 const DEFAULT_SERVER = process.env.SERVER_URL ?? 'https://claudecraft-east.eastus.cloudapp.azure.com';
 const CRED_FILE = path.join(os.homedir(), '.claudecraft-mcp.json');
+const MEMORY_DIR = path.join(os.homedir(), '.claudecraft-mcp-memory');
+
+// ---------------------------------------------------------------------------
+// Per-character memory: a plain markdown file the agent reads on join and
+// appends to with `remember` — lets a bot recognize players across sessions.
+// ---------------------------------------------------------------------------
+
+function memoryPath(server: string, charName: string): string {
+  const safe = `${server.replace(/[^a-z0-9]+/gi, '_')}__${charName}`;
+  return path.join(MEMORY_DIR, `${safe}.md`);
+}
+
+function readMemory(server: string, charName: string): string {
+  try { return fs.readFileSync(memoryPath(server, charName), 'utf-8'); } catch { return ''; }
+}
+
+function appendMemory(server: string, charName: string, note: string): void {
+  fs.mkdirSync(MEMORY_DIR, { recursive: true });
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  fs.appendFileSync(memoryPath(server, charName), `- [${stamp}] ${note}\n`);
+}
 
 // ---------------------------------------------------------------------------
 // Game client (same wire protocol as the browser client / test bots)
@@ -296,7 +317,48 @@ server.tool(
   },
   async ({ name, player_class, server_url }) => {
     const msg = await game.join(server_url, name, player_class);
-    return text(msg + '\n\n' + buildLook(60));
+    const memory = readMemory(game.base, name);
+    const memBlock = memory
+      ? `\n\nyour memory from past sessions:\n${memory.split('\n').slice(-40).join('\n')}`
+      : '\n\n(no memories yet — use remember to keep notes about players and places)';
+    return text(msg + memBlock + '\n\n' + buildLook(60));
+  },
+);
+
+server.tool(
+  'remember',
+  'Save a note to your permanent memory for this character (who you met, what they said, places, promises, grudges). Recalled automatically on every join_world.',
+  { note: z.string().max(500) },
+  async ({ note }) => {
+    if (!game.charName) return text('join a world first so memory has a character to belong to');
+    appendMemory(game.base, game.charName, note);
+    return text('remembered');
+  },
+);
+
+server.tool(
+  'recall',
+  'Read your full permanent memory for this character.',
+  {},
+  async () => {
+    if (!game.charName) return text('join a world first');
+    const memory = readMemory(game.base, game.charName);
+    return text(memory || '(no memories yet)');
+  },
+);
+
+server.tool(
+  'listen',
+  'Wait and listen specifically for chat from players. Returns chat lines (and a count of other events) — the polite way to hold a conversation.',
+  { seconds: z.number().min(1).max(30).default(8) },
+  async ({ seconds }) => {
+    await sleep(seconds * 1000);
+    const evts = game.drainEvents();
+    const chat = evts.filter((e) => e.type === 'chat');
+    const lines = chat.map((c) => `${c.from}${c.channel && c.channel !== 'say' ? ` [${c.channel}]` : ''}: ${c.text}`);
+    return text(lines.length
+      ? `heard ${lines.length} chat line(s) (${evts.length - chat.length} other events):\n` + lines.join('\n')
+      : `silence for ${seconds}s (${evts.length} non-chat events)`);
   },
 );
 
