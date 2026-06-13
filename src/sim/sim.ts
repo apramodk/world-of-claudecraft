@@ -225,6 +225,8 @@ export class Sim {
         const pos = this.groundPos(best.x, best.z);
         const level = this.rng.int(template.minLevel, template.maxLevel);
         const mob = createMob(this.nextId++, template, level, pos);
+        mob.campCenter = { x: camp.center.x, y: 0, z: camp.center.z };
+        mob.campRadius = camp.radius;
         mob.facing = this.rng.range(-Math.PI, Math.PI);
         mob.prevFacing = mob.facing;
         mob.wanderTimer = this.rng.range(2, 10);
@@ -1644,7 +1646,8 @@ export class Sim {
     if (e.kind === 'mob') {
       e.aiState = 'dead';
       e.corpseTimer = CORPSE_DURATION;
-      e.respawnTimer = this.cfg.respawnSeconds * (MOBS[e.templateId]?.rare ? 4 : 1);
+      // ±25% variance so a cleared camp doesn't all pop back in lockstep
+      e.respawnTimer = this.cfg.respawnSeconds * (MOBS[e.templateId]?.rare ? 4 : 1) * this.rng.range(0.75, 1.25);
       e.aggroTargetId = null;
 
       // credit goes to the tapping player (fall back to the killer)
@@ -1974,6 +1977,28 @@ export class Sim {
   }
 
   private respawnMob(mob: Entity): void {
+    // pick a fresh spot somewhere in the camp instead of rubberbanding to the
+    // exact death point — and never pop in right next to a player (wait until
+    // they move on). Makes the area feel alive rather than whack-a-mole.
+    if (mob.campCenter && mob.campRadius) {
+      const template = MOBS[mob.templateId];
+      const minHeight = template?.family === 'murloc' ? WATER_LEVEL - 0.5 : WATER_LEVEL + 0.4;
+      let chosen: { x: number; z: number } | null = null;
+      for (let tries = 0; tries < 8; tries++) {
+        const ang = this.rng.range(0, Math.PI * 2);
+        const r = Math.sqrt(this.rng.next()) * mob.campRadius;
+        const cand = this.findSafePos(mob.campCenter.x + Math.sin(ang) * r, mob.campCenter.z + Math.cos(ang) * r, minHeight);
+        let nearPlayer = false;
+        for (const meta of this.players.values()) {
+          const pe = this.entities.get(meta.entityId);
+          if (pe && !pe.dead && dist2d(pe.pos, { x: cand.x, y: 0, z: cand.z }) < 22) { nearPlayer = true; break; }
+        }
+        if (!nearPlayer) { chosen = cand; break; }
+      }
+      // every candidate had a player on it — stay dead and retry shortly
+      if (!chosen) { mob.respawnTimer = 4; return; }
+      mob.spawnPos = this.groundPos(chosen.x, chosen.z);
+    }
     mob.dead = false;
     mob.lootable = false;
     mob.loot = null;

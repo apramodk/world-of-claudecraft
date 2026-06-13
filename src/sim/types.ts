@@ -402,6 +402,10 @@ export interface Entity {
   summonedIds: number[]; // live adds this boss summoned; despawned on reset
   enraged: boolean; // enrage mechanic active
   spawnPos: Vec3;
+  // camp the mob belongs to — on respawn it picks a fresh spot in this area
+  // instead of rubberbanding back to the exact same point it died at
+  campCenter?: Vec3;
+  campRadius?: number;
   wanderTarget: Vec3 | null;
   wanderTimer: number;
   aggroTargetId: number | null;
