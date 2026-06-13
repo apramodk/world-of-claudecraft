@@ -252,6 +252,30 @@ class GameClient {
     return out;
   }
 
+  // Sleep up to `seconds`, but ABORT the instant a threat appears: HP drops
+  // (something is hitting us) or a hostile mob closes within `alertYd`. Returns
+  // a reason string if interrupted, or '' if the full time elapsed quietly.
+  // Snapshots stream in at 20Hz, so this notices aggro within ~1s instead of
+  // only when a blind sleep finishes.
+  async watchedSleep(seconds: number, alertYd = 13): Promise<string> {
+    const startHp = this.self?.hp ?? 0;
+    const until = Date.now() + seconds * 1000;
+    while (Date.now() < until) {
+      await sleep(700);
+      if (!this.connected || !this.self) return 'connection lost';
+      if (this.self.dead) return 'you DIED';
+      if (this.self.hp < startHp) {
+        const threat = nearestThreat();
+        return `⚠️ UNDER ATTACK — hp ${this.self.hp}/${this.self.mhp} (was ${startHp})${threat ? `, ${threat.nm} ${d2(threat, this.self).toFixed(0)}yd ${compass(threat.x - this.self.x, threat.z - this.self.z)}` : ''}. Act now — flee, fight, or heal.`;
+      }
+      const threat = nearestThreat();
+      if (threat && d2(threat, this.self) <= alertYd) {
+        return `⚠️ a ${threat.nm} (lv${threat.lv}) is closing in — ${d2(threat, this.self).toFixed(0)}yd ${compass(threat.x - this.self.x, threat.z - this.self.z)} and may aggro. Move away or engage on your terms.`;
+      }
+    }
+    return '';
+  }
+
   // Fight one target to the death with survival reflexes: cast openers, and
   // bail (run back the way we came) if HP gets low or a second mob joins in.
   async fight(targetId: number, openerSlots: number[]): Promise<string> {
@@ -369,13 +393,15 @@ function statusLine(): string {
   const safe = safeTargets();
   const threat = nearestThreat();
   const corpses = [...game.ents.values()].filter((e) => e.k === 'mob' && e.dead && e.loot).length;
+  // a hostile within ~8yd is almost certainly already hitting you — lead with it
+  const danger = threat && d2(threat, me) <= 8 ? `⚠️ ${threat.nm} ON YOU (${d2(threat, me).toFixed(0)}yd) — ` : '';
   const bits = [`hp ${me.hp}/${me.mhp}`];
   if (me.mres) bits.push(`${me.rtype ?? 'mana'} ${me.res}/${me.mres}`);
   bits.push(safe.length ? `${safe.length} safe target${safe.length > 1 ? 's' : ''} (nearest #${safe[0].id} ${safe[0].nm} ${d2(safe[0], me).toFixed(0)}yd)` : 'no safe targets in view');
-  if (threat) bits.push(`nearest mob: ${threat.nm} ${d2(threat, me).toFixed(0)}yd ${compass(threat.x - me.x, threat.z - me.z)}`);
+  if (threat && !danger) bits.push(`nearest mob: ${threat.nm} ${d2(threat, me).toFixed(0)}yd ${compass(threat.x - me.x, threat.z - me.z)}`);
   if (corpses) bits.push(`${corpses} lootable corpse${corpses > 1 ? 's' : ''}`);
   if (me.dead) bits.push('YOU ARE DEAD — release_spirit');
-  return `[ ${bits.join(' · ')} ]`;
+  return `${danger}[ ${bits.join(' · ')} ]`;
 }
 
 // named landmarks aimed at the EDGE of each mob area (not the dense center),
@@ -573,11 +599,12 @@ server.tool(
   'Wait and listen specifically for chat from players. Returns chat lines (and a count of other events) — the polite way to hold a conversation.',
   { seconds: z.number().min(1).max(30).default(8) },
   async ({ seconds }) => {
-    await sleep(seconds * 1000);
+    const alert = await game.watchedSleep(seconds);
     const evts = game.drainEvents();
     game.unreadChat = []; // listen displays chat itself; don't re-append via text()
     const chat = evts.filter((e) => e.type === 'chat');
     const lines = chat.map((c) => `${c.from}${c.channel && c.channel !== 'say' ? ` [${c.channel}]` : ''}: ${c.text}`);
+    if (alert) return text(`${alert}\n` + (lines.length ? `(also heard: ${lines.join(' | ')})` : ''));
     return text(lines.length
       ? `heard ${lines.length} chat line(s) (${evts.length - chat.length} other events):\n` + lines.join('\n')
       : `silence for ${seconds}s (${evts.length} non-chat events)`);
@@ -758,9 +785,10 @@ server.tool(
   'Wait and watch for a few seconds (combat ticks, mob movement, chat), then return everything that happened.',
   { seconds: z.number().min(1).max(15).default(3) },
   async ({ seconds }) => {
-    await sleep(seconds * 1000);
+    const alert = await game.watchedSleep(seconds);
     const evts = game.drainEvents();
-    return text(`${evts.length} events in ${seconds}s:\n` + evts.slice(-40).map((e) => JSON.stringify(e)).join('\n'));
+    const head = alert ? `${alert}\n— ` : '';
+    return text(`${head}${evts.length} events in ${seconds}s:\n` + evts.slice(-40).map((e) => JSON.stringify(e)).join('\n'));
   },
 );
 
