@@ -267,11 +267,20 @@ async function main(): Promise<void> {
       ws.close();
       return;
     }
+    // force-takeover: a fresh login for a character already in world on THIS
+    // shard displaces the old connection (same account reconnecting, or a stale
+    // ghost from a dropped socket) instead of rejecting. Kills the "can't act —
+    // already in world" deadlock where the client and server disagree on state.
+    const existing = game.findSession(character.id);
+    if (existing) {
+      try { existing.ws.send(JSON.stringify({ t: 'error', error: 'replaced by a newer login' })); } catch { /* gone */ }
+      await game.leave(existing, 'replaced by a newer login');
+    }
     // cross-shard guard: claim the character globally before joining — another
     // region may have it online (the local check in game.join can't see that)
     const claimed = await claimCharacterOnline(character.id);
     if (!claimed) {
-      ws.send(JSON.stringify({ t: 'error', error: 'character already in world' }));
+      ws.send(JSON.stringify({ t: 'error', error: 'character already in world on another realm' }));
       ws.close();
       return;
     }

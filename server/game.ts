@@ -182,6 +182,11 @@ export class GameServer {
     return session;
   }
 
+  // Find an in-world session by character id (for self force-takeover).
+  findSession(characterId: number): ClientSession | undefined {
+    return [...this.clients.values()].find((s) => s.characterId === characterId);
+  }
+
   // Attach a read-only spectator to a named online player's POV. The socket
   // receives that player's snapshots/events verbatim; anything it sends is
   // ignored. Used for stream cameras (?spectate=Name in the web client).

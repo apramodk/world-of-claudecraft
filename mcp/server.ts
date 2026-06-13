@@ -252,6 +252,59 @@ class GameClient {
     return out;
   }
 
+  // Fight one target to the death with survival reflexes: cast openers, and
+  // bail (run back the way we came) if HP gets low or a second mob joins in.
+  async fight(targetId: number, openerSlots: number[]): Promise<string> {
+    if (!this.connected || !this.self) throw new Error('not in world');
+    const retreat = { x: this.self.x, z: this.self.z };
+    this.cmd({ cmd: 'target', id: targetId });
+    this.cmd({ cmd: 'attack' });
+    const start = Date.now();
+    let slotI = 0;
+    while (this.connected && !this.self.dead) {
+      const t = this.ents.get(targetId);
+      if (!t || t.dead) {
+        if (t?.dead && t.loot) { this.cmd({ cmd: 'loot', id: targetId }); await sleep(400); }
+        return `killed #${targetId}${t?.loot ? ' and looted it' : ''}`;
+      }
+      // survival: low HP, or an extra hostile mob got close = disengage
+      const hpFrac = this.self.hp / this.self.mhp;
+      const adds = [...this.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.h && e.id !== targetId && d2(e, this.self) < 16);
+      if (hpFrac < 0.35 || adds.length) {
+        this.cmd({ cmd: 'stopattack' });
+        const why = adds.length ? `a second mob (${adds[0].nm}) joined in` : `HP got low (${this.self.hp}/${this.self.mhp})`;
+        await this.moveTo(retreat.x, retreat.z, 3);
+        return `broke off the fight — ${why}; retreated to safety`;
+      }
+      // weave an opener off cooldown
+      if (openerSlots.length) { this.cmd({ cmd: 'castSlot', slot: openerSlots[slotI % openerSlots.length] }); slotI++; }
+      if (Date.now() - start > 40_000) { this.cmd({ cmd: 'stopattack' }); return `fight with #${targetId} dragged on past 40s — disengaging`; }
+      await sleep(1100);
+    }
+    return this.self?.dead ? `died fighting #${targetId}` : 'fight ended';
+  }
+
+  // Sit and recover HP/mana; breaks early if a hostile wanders close.
+  async rest(): Promise<string> {
+    if (!this.connected || !this.self) throw new Error('not in world');
+    // eat/drink anything in bags first
+    for (const s of this.self.inv ?? []) {
+      const item = (ITEMS as any)[s.itemId];
+      if (item && (item.kind === 'food' || item.kind === 'drink')) this.cmd({ cmd: 'use', item: s.itemId });
+    }
+    const start = Date.now();
+    while (this.connected && !this.self.dead) {
+      const hpFull = this.self.hp >= this.self.mhp;
+      const manaFull = !this.self.mres || this.self.res >= this.self.mres;
+      if (hpFull && manaFull) return `rested up — hp ${this.self.hp}/${this.self.mhp}${this.self.mres ? `, ${this.self.rtype ?? 'mana'} ${this.self.res}/${this.self.mres}` : ''}`;
+      const threat = nearestThreat();
+      if (threat && d2(threat, this.self) < 18) return `cut rest short — ${threat.nm} approached (${d2(threat, this.self).toFixed(0)}yd); hp ${this.self.hp}/${this.self.mhp}`;
+      if (Date.now() - start > 45_000) return `rested 45s — hp ${this.self.hp}/${this.self.mhp}${this.self.mres ? `, ${this.self.rtype ?? 'mana'} ${this.self.res}/${this.self.mres}` : ''}`;
+      await sleep(1500);
+    }
+    return 'rest interrupted';
+  }
+
   async leave(): Promise<void> {
     this.stopMoving();
     this.stopInput();
@@ -273,6 +326,58 @@ function compass(dx: number, dz: number): string {
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   return dirs[Math.round(((Math.atan2(dx, dz) * 180) / Math.PI + 360) % 360 / 45) % 8];
 }
+
+const d2 = (a: any, b: any) => Math.hypot(a.x - b.x, a.z - b.z);
+const SAFE_RADIUS = 22; // a target with no other mob this close = no adds
+
+// alive hostile mobs in view, level <= mine, with no other living mob within
+// SAFE_RADIUS — i.e. things this glass-cannon mage can actually kill solo
+function safeTargets(): any[] {
+  const me = game.self;
+  if (!me) return [];
+  const mobs = [...game.ents.values()].filter((e) => e.k === 'mob' && !e.dead);
+  return mobs
+    .filter((e) => e.h && e.lv <= me.lv && !mobs.some((o) => o.id !== e.id && d2(o, e) < SAFE_RADIUS))
+    .sort((a, b) => d2(a, me) - d2(b, me));
+}
+
+function nearestThreat(): any | null {
+  const me = game.self;
+  if (!me) return null;
+  return [...game.ents.values()]
+    .filter((e) => e.k === 'mob' && !e.dead && e.h)
+    .sort((a, b) => d2(a, me) - d2(b, me))[0] ?? null;
+}
+
+// one compact line appended to action results so the agent rarely needs a
+// dedicated `look` turn (logs showed ~46% of turns were look/listen)
+function statusLine(): string {
+  const me = game.self;
+  if (!me) return '';
+  const safe = safeTargets();
+  const threat = nearestThreat();
+  const corpses = [...game.ents.values()].filter((e) => e.k === 'mob' && e.dead && e.loot).length;
+  const bits = [`hp ${me.hp}/${me.mhp}`];
+  if (me.mres) bits.push(`${me.rtype ?? 'mana'} ${me.res}/${me.mres}`);
+  bits.push(safe.length ? `${safe.length} safe target${safe.length > 1 ? 's' : ''} (nearest #${safe[0].id} ${safe[0].nm} ${d2(safe[0], me).toFixed(0)}yd)` : 'no safe targets in view');
+  if (threat) bits.push(`nearest mob: ${threat.nm} ${d2(threat, me).toFixed(0)}yd ${compass(threat.x - me.x, threat.z - me.z)}`);
+  if (corpses) bits.push(`${corpses} lootable corpse${corpses > 1 ? 's' : ''}`);
+  if (me.dead) bits.push('YOU ARE DEAD — release_spirit');
+  return `[ ${bits.join(' · ')} ]`;
+}
+
+// named landmarks (direction + approx distance from town center ~0,0), from
+// the zone layout — lets goto leave town toward mob areas without coordinates
+const LANDMARKS: Record<string, { x: number; z: number }> = {
+  town: { x: 0, z: 0 }, eastbrook: { x: 0, z: 0 },
+  wolves: { x: 0, z: 70 }, north: { x: 0, z: 70 },
+  boars: { x: 70, z: 10 }, east: { x: 70, z: 10 },
+  webwood: { x: -70, z: 0 }, spiders: { x: -70, z: 0 }, west: { x: -70, z: 0 },
+  lake: { x: -45, z: 55 }, 'mirror lake': { x: -45, z: 55 },
+  chapel: { x: 45, z: 60 }, 'fallen chapel': { x: 45, z: 60 }, undead: { x: 45, z: 60 },
+  mine: { x: -55, z: -45 }, 'copper dig': { x: -55, z: -45 }, kobolds: { x: -55, z: -45 },
+  bandits: { x: 60, z: -55 }, 'bandit camp': { x: 60, z: -55 },
+};
 
 function entityLine(e: any, me: any): string {
   const dist = Math.hypot(e.x - me.x, e.z - me.z);
@@ -351,6 +456,9 @@ function text(s: string) {
     game.unreadChat = [];
     s += `\n\n[players are talking — respond if it concerns you]\n${lines.join('\n')}`;
   }
+  // compact situational status on action results so a separate `look` is rarely
+  // needed — `look` itself already shows everything, so skip it there
+  if (game.connected && game.self && !s.startsWith('==')) s += `\n${statusLine()}`;
   return { content: [{ type: 'text' as const, text: s }] };
 }
 
@@ -509,6 +617,56 @@ server.tool(
   'Cast an ability by action-bar slot (0-11, as the spellbook orders them) on your current target.',
   { slot: z.number().min(0).max(11) },
   async ({ slot }) => { game.cmd({ cmd: 'castSlot', slot }); return text(`cast slot ${slot} — look to see the result`); },
+);
+
+server.tool(
+  'hunt',
+  'Smart, safe combat — your best tool for leveling. Finds the nearest HOSTILE mob at or below your level with NO other mob nearby (so you never pull adds), walks to it, fights to the death weaving your opener spells, and automatically retreats if your HP drops or a second mob joins. Pass a target id to hunt a specific mob instead.',
+  {
+    entity_id: z.number().optional().describe('hunt this specific mob; omit to auto-pick the safest one'),
+    opener_slots: z.array(z.number()).default([1, 2]).describe('ability slots to weave in (default: your first damage spells)'),
+  },
+  async ({ entity_id, opener_slots }) => {
+    if (!game.self) return text('join a world first');
+    if (game.self.dead) return text('you are dead — release_spirit first');
+    let target = entity_id ?? null;
+    if (target == null) {
+      const safe = safeTargets();
+      if (!safe.length) return text('no safe targets in view — nothing hostile at your level without adds nearby. goto "wolves" (or another mob area), or rest/socialize.\n' + statusLine());
+      target = safe[0].id;
+    }
+    const e = game.ents.get(target);
+    if (!e) return text(`#${target} not in view`);
+    const approach = await game.moveTo(e.x, e.z, 4);
+    if (/stuck|gave up/.test(approach)) return text(`couldn't reach #${target}: ${approach}`);
+    const result = await game.fight(target, opener_slots);
+    return text(`hunt: ${result}`);
+  },
+);
+
+server.tool(
+  'rest',
+  'Sit and recover HP and mana (eats/drinks from your bags first). Returns when topped up, or early if a hostile wanders close. Do this after fights instead of charging in hurt.',
+  {},
+  async () => {
+    if (!game.self) return text('join a world first');
+    if (game.self.dead) return text('you are dead — release_spirit first');
+    return text(await game.rest());
+  },
+);
+
+server.tool(
+  'goto',
+  'Travel to a named place and stop there. Known: town, wolves (north), boars (east), webwood (west), lake, chapel (northeast), mine (southwest), bandits (southeast). Use this to leave town and find mobs to hunt.',
+  { place: z.string().describe('e.g. "wolves", "town", "boars", "chapel"') },
+  async ({ place }) => {
+    if (!game.self) return text('join a world first');
+    const key = place.toLowerCase().trim();
+    const dest = LANDMARKS[key];
+    if (!dest) return text(`unknown place "${place}". known: ${[...new Set(Object.keys(LANDMARKS))].join(', ')}`);
+    const result = await game.moveTo(dest.x, dest.z, 8);
+    return text(`goto ${place}: ${result}`);
+  },
 );
 
 server.tool(
