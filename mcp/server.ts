@@ -41,6 +41,30 @@ function appendMemory(server: string, charName: string, note: string): void {
   fs.appendFileSync(memoryPath(server, charName), `- [${stamp}] ${note}\n`);
 }
 
+// Per-character task list: persistent goals the agent works through across
+// sessions. Players can hand the bot tasks in chat; it adds them here.
+interface BotTask { id: number; text: string; done: boolean; added: string }
+
+function tasksPath(server: string, charName: string): string {
+  return memoryPath(server, charName).replace(/\.md$/, '.tasks.json');
+}
+
+function readTasks(server: string, charName: string): BotTask[] {
+  try { return JSON.parse(fs.readFileSync(tasksPath(server, charName), 'utf-8')); } catch { return []; }
+}
+
+function writeTasks(server: string, charName: string, tasks: BotTask[]): void {
+  fs.mkdirSync(MEMORY_DIR, { recursive: true });
+  fs.writeFileSync(tasksPath(server, charName), JSON.stringify(tasks, null, 2));
+}
+
+function tasksSummary(server: string, charName: string): string {
+  const tasks = readTasks(server, charName);
+  const open = tasks.filter((t) => !t.done);
+  if (!open.length) return '(no open tasks — add_task to set goals)';
+  return open.map((t) => `  #${t.id} ${t.text}`).join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Game client (same wire protocol as the browser client / test bots)
 // ---------------------------------------------------------------------------
@@ -321,7 +345,8 @@ server.tool(
     const memBlock = memory
       ? `\n\nyour memory from past sessions:\n${memory.split('\n').slice(-40).join('\n')}`
       : '\n\n(no memories yet — use remember to keep notes about players and places)';
-    return text(msg + memBlock + '\n\n' + buildLook(60));
+    const taskBlock = `\n\nyour open tasks:\n${tasksSummary(game.base, name)}`;
+    return text(msg + memBlock + taskBlock + '\n\n' + buildLook(60));
   },
 );
 
@@ -344,6 +369,47 @@ server.tool(
     if (!game.charName) return text('join a world first');
     const memory = readMemory(game.base, game.charName);
     return text(memory || '(no memories yet)');
+  },
+);
+
+server.tool(
+  'add_task',
+  'Add a persistent goal to your task list (survives logouts; shown on every join_world). Use for quests to finish, levels to reach, promises made to players.',
+  { task: z.string().max(300) },
+  async ({ task }) => {
+    if (!game.charName) return text('join a world first');
+    const tasks = readTasks(game.base, game.charName);
+    const id = (tasks[tasks.length - 1]?.id ?? 0) + 1;
+    tasks.push({ id, text: task, done: false, added: new Date().toISOString().slice(0, 10) });
+    writeTasks(game.base, game.charName, tasks);
+    return text(`task #${id} added:\n${tasksSummary(game.base, game.charName)}`);
+  },
+);
+
+server.tool(
+  'complete_task',
+  'Mark a task done by id.',
+  { task_id: z.number() },
+  async ({ task_id }) => {
+    if (!game.charName) return text('join a world first');
+    const tasks = readTasks(game.base, game.charName);
+    const t = tasks.find((x) => x.id === task_id);
+    if (!t) return text(`no task #${task_id}`);
+    t.done = true;
+    writeTasks(game.base, game.charName, tasks);
+    return text(`task #${task_id} done. remaining:\n${tasksSummary(game.base, game.charName)}`);
+  },
+);
+
+server.tool(
+  'list_tasks',
+  'List your open tasks (and recently completed ones).',
+  {},
+  async () => {
+    if (!game.charName) return text('join a world first');
+    const tasks = readTasks(game.base, game.charName);
+    const done = tasks.filter((t) => t.done).slice(-5).map((t) => `  ✓ #${t.id} ${t.text}`);
+    return text(`open:\n${tasksSummary(game.base, game.charName)}${done.length ? `\nrecently done:\n${done.join('\n')}` : ''}`);
   },
 );
 
