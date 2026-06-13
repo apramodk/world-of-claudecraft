@@ -11,6 +11,14 @@ cd "$ROOT"
 mkdir -p tmp
 LOG="tmp/resident_bot.log"
 
+# single-instance guard: kill any prior Haikubot bot processes (orphaned MCP
+# servers / claude loops) so we never run two — duplicates fight over the one
+# character via the server's force-takeover and ping-pong each other offline
+if command -v powershell.exe > /dev/null; then
+  powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -match 'claudecraft-mcp\.mjs' -and \$_.ProcessId -ne $$ } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" 2>/dev/null || true
+  sleep 2
+fi
+
 WROOT="$ROOT"
 command -v cygpath > /dev/null && WROOT="$(cygpath -m "$ROOT")"
 cat > tmp/mcp-config.json <<EOF
