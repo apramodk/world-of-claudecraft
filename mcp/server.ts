@@ -146,15 +146,41 @@ class GameClient {
       char = created.body;
     }
 
-    await new Promise<void>((resolve, reject) => {
+    // connect, retrying on "already in world" — after our own leave() the
+    // server releases the online claim asynchronously, so a fast rejoin can
+    // race it; back off and retry rather than deadlocking the bot
+    for (let attempt = 0; ; attempt++) {
+      try { await this.connectWs(char.id); break; }
+      catch (err) {
+        const m = String((err as Error).message ?? err);
+        if (m.includes('already in world') && attempt < 5) { await sleep(2000); continue; }
+        throw err;
+      }
+    }
+
+    // movement intent stream, same cadence as the browser client
+    this.inputTimer = setInterval(() => {
+      if (!this.connected) return;
+      const msg: Record<string, unknown> = { t: 'input', mi: this.mi };
+      if (this.facing !== null) msg.facing = this.facing;
+      this.ws!.send(JSON.stringify(msg));
+    }, 50);
+
+    // wait for the first snapshot so `look` works immediately
+    for (let i = 0; i < 60 && !this.self; i++) await sleep(100);
+    return `joined as ${charName} (${char.class} lv${char.level ?? this.self?.lv ?? '?'}) on ${this.base}`;
+  }
+
+  private connectWs(charId: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const wsUrl = this.base.replace(/^http/, 'ws') + '/ws';
       this.ws = new WebSocket(wsUrl);
       const to = setTimeout(() => reject(new Error('join timeout (10s)')), 10_000);
-      this.ws.on('open', () => this.ws!.send(JSON.stringify({ t: 'auth', token: this.token, character: char.id })));
+      this.ws.on('open', () => this.ws!.send(JSON.stringify({ t: 'auth', token: this.token, character: charId })));
       this.ws.on('message', (data) => {
         const msg = JSON.parse(String(data));
         if (msg.t === 'hello') { this.pid = msg.pid; clearTimeout(to); resolve(); }
-        else if (msg.t === 'error') { clearTimeout(to); reject(new Error(msg.error)); }
+        else if (msg.t === 'error') { clearTimeout(to); try { this.ws?.close(); } catch { /* */ } reject(new Error(msg.error)); }
         else if (msg.t === 'snap') {
           if (this.self) for (const k of DELTA_SELF_KEYS) if (!(k in msg.self)) msg.self[k] = this.self[k];
           this.self = msg.self;
@@ -173,18 +199,6 @@ class GameClient {
       this.ws.on('error', (err) => { clearTimeout(to); reject(err); });
       this.ws.on('close', () => { this.stopInput(); this.ws = null; });
     });
-
-    // movement intent stream, same cadence as the browser client
-    this.inputTimer = setInterval(() => {
-      if (!this.connected) return;
-      const msg: Record<string, unknown> = { t: 'input', mi: this.mi };
-      if (this.facing !== null) msg.facing = this.facing;
-      this.ws!.send(JSON.stringify(msg));
-    }, 50);
-
-    // wait for the first snapshot so `look` works immediately
-    for (let i = 0; i < 60 && !this.self; i++) await sleep(100);
-    return `joined as ${charName} (${char.class} lv${char.level ?? this.self?.lv ?? '?'}) on ${this.base}`;
   }
 
   cmd(payload: Record<string, unknown>): void {
@@ -355,6 +369,12 @@ server.tool(
     server_url: z.string().default(DEFAULT_SERVER),
   },
   async ({ name, player_class, server_url }) => {
+    // idempotent: if already living as this character, don't reconnect (a
+    // destructive rejoin would race the duplicate-login guard and lock out) —
+    // just hand back current state so a confused agent can't deadlock itself
+    if (game.connected && game.charName.toLowerCase() === name.toLowerCase()) {
+      return text(`already living as ${name} — you never left. here's where you are:\n\n` + buildLook(60));
+    }
     const msg = await game.join(server_url, name, player_class);
     const memory = readMemory(game.base, name);
     const memBlock = memory

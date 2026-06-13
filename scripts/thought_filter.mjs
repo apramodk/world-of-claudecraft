@@ -52,10 +52,11 @@ rl.on('line', (line) => {
   if (msg.type === 'assistant') {
     for (const block of msg.message?.content ?? []) {
       if (block.type === 'text') emit('thought', block.text);
-      else if (block.type === 'tool_use') {
+      else if (block.type === 'tool_use' && block.name.startsWith('mcp__claudecraft__')) {
+        // only game actions reach the stream — skip claude's internal tools
         const name = block.name.replace(/^mcp__claudecraft__/, '');
         const verb = TOOL_VERBS[name];
-        emit('action', verb ? verb(block.input ?? {}) : `${name}(${JSON.stringify(block.input ?? {}).slice(0, 120)})`);
+        emit('action', verb ? verb(block.input ?? {}) : name);
       }
     }
   } else if (msg.type === 'result') {
