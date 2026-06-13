@@ -280,11 +280,9 @@ class GameClient {
   // bail (run back the way we came) if HP gets low or a second mob joins in.
   async fight(targetId: number, openerSlots: number[]): Promise<string> {
     if (!this.connected || !this.self) throw new Error('not in world');
-    // kite/retreat anchor: a point ~22yd back toward town (open ground), so the
-    // wolf gets pulled OUT of its pack instead of the fight happening inside it
+    // a point ~22yd back toward town to retreat to if it goes bad
     const ang = Math.atan2(0 - this.self.x, 0 - this.self.z);
     const retreat = { x: this.self.x + Math.sin(ang) * 22, z: this.self.z + Math.cos(ang) * 22 };
-    const caster = (this.self.mres ?? 0) > 0; // casters kite; melee toe-to-toe
     this.cmd({ cmd: 'target', id: targetId });
     this.cmd({ cmd: 'attack' });
     const start = Date.now();
@@ -292,37 +290,25 @@ class GameClient {
     while (this.connected && !this.self.dead) {
       const t = this.ents.get(targetId);
       if (!t || t.dead) {
-        this.mi.f = 0;
         if (t?.dead && t.loot) { this.cmd({ cmd: 'loot', id: targetId }); await sleep(400); }
         return `killed #${targetId}${t?.loot ? ' and looted it' : ''}`;
       }
-      // survival: bail if HP gets low, or a SECOND wolf is actually on you
-      // (within 9yd — mobs milling at 12yd aren't hitting you). Kiting toward
-      // the safe origin keeps the fight away from the pack.
+      // bail if HP gets low or a SECOND wolf is actually on you (within 9yd).
+      // A single isolated wolf barely dents a mage, so stand and nuke it — no
+      // kiting: at low level there's no slow, and backpedal is slower than the
+      // wolf, so moving just cancels casts and the fight never ends.
       const hpFrac = this.self.hp / this.self.mhp;
       const onMe = [...this.ents.values()].filter((e) => e.k === 'mob' && !e.dead && e.h && e.id !== targetId && d2(e, this.self) < 9);
-      if (hpFrac < 0.45 || onMe.length >= 1) {
-        this.mi.f = 0;
+      if (hpFrac < 0.35 || onMe.length >= 2) {
         this.cmd({ cmd: 'stopattack' });
-        const why = onMe.length ? `a second wolf closed in` : `HP got low (${this.self.hp}/${this.self.mhp})`;
+        const why = onMe.length >= 2 ? `${onMe.length} extra wolves swarmed in` : `HP got low (${this.self.hp}/${this.self.mhp})`;
         await this.moveTo(retreat.x, retreat.z, 3);
         return `broke off — ${why}; pulled back to safety (hp ${this.self.hp}/${this.self.mhp})`;
       }
-      // fire an ability (instants land immediately; the nuke is the kill)
+      // fire an ability each GCD; auto-attack ticks in between
       if (openerSlots.length) { this.cmd({ cmd: 'castSlot', slot: openerSlots[slotI % openerSlots.length] }); slotI++; }
-      if (Date.now() - start > 45_000) { this.mi.f = 0; this.cmd({ cmd: 'stopattack' }); return `fight with #${targetId} dragged on past 45s — disengaging`; }
-      // KITE (casters) TOWARD the safe origin: when the wolf reaches melee,
-      // stutter-step back to where you pulled from (away from the pack, not
-      // deeper into it). A 54-hp mage kills the wolf as it chases your nukes.
-      if (caster && d2(t, this.self) < 8 && d2(this.self, retreat) > 3) {
-        this.facing = Math.atan2(retreat.x - this.self.x, retreat.z - this.self.z); // toward safety
-        this.mi.f = 1;
-        await sleep(1100);
-        this.mi.f = 0;
-        await sleep(900);    // stop, let the next cast land
-      } else {
-        await sleep(1100);
-      }
+      if (Date.now() - start > 30_000) { this.cmd({ cmd: 'stopattack' }); return `fight with #${targetId} dragged past 30s — disengaging`; }
+      await sleep(1600); // let the cast land before the next
     }
     return this.self?.dead ? `died fighting #${targetId}` : 'fight ended';
   }
@@ -681,7 +667,7 @@ server.tool(
   'Smart, safe combat — your best tool for leveling. Finds the nearest HOSTILE mob at or below your level with NO other mob nearby (so you never pull adds), walks to it, fights to the death weaving your opener spells, and automatically retreats if your HP drops or a second mob joins. Pass a target id to hunt a specific mob instead.',
   {
     entity_id: z.number().optional().describe('hunt this specific mob; omit to auto-pick the safest one'),
-    opener_slots: z.array(z.number()).default([1, 2]).describe('ability slots to weave in (default: your first damage spells)'),
+    opener_slots: z.array(z.number()).default([1]).describe('damage ability slots to spam (default: slot 1, your main nuke — do NOT include buff/self slots, they waste GCDs and mana)'),
   },
   async ({ entity_id, opener_slots }) => {
     if (!game.self) return text('join a world first');
