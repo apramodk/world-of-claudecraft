@@ -378,17 +378,17 @@ function statusLine(): string {
   return `[ ${bits.join(' · ')} ]`;
 }
 
-// named landmarks (direction + approx distance from town center ~0,0), from
-// the zone layout — lets goto leave town toward mob areas without coordinates
+// named landmarks aimed at the EDGE of each mob area (not the dense center),
+// so goto leaves you among the stragglers you can safely pull, not surrounded
 const LANDMARKS: Record<string, { x: number; z: number }> = {
   town: { x: 0, z: 0 }, eastbrook: { x: 0, z: 0 },
-  wolves: { x: 0, z: 70 }, north: { x: 0, z: 70 },
-  boars: { x: 70, z: 10 }, east: { x: 70, z: 10 },
-  webwood: { x: -70, z: 0 }, spiders: { x: -70, z: 0 }, west: { x: -70, z: 0 },
-  lake: { x: -45, z: 55 }, 'mirror lake': { x: -45, z: 55 },
-  chapel: { x: 45, z: 60 }, 'fallen chapel': { x: 45, z: 60 }, undead: { x: 45, z: 60 },
-  mine: { x: -55, z: -45 }, 'copper dig': { x: -55, z: -45 }, kobolds: { x: -55, z: -45 },
-  bandits: { x: 60, z: -55 }, 'bandit camp': { x: 60, z: -55 },
+  wolves: { x: 0, z: 42 }, north: { x: 0, z: 42 },
+  boars: { x: 42, z: 6 }, east: { x: 42, z: 6 },
+  webwood: { x: -42, z: 0 }, spiders: { x: -42, z: 0 }, west: { x: -42, z: 0 },
+  lake: { x: -38, z: 45 }, 'mirror lake': { x: -38, z: 45 },
+  chapel: { x: 38, z: 50 }, 'fallen chapel': { x: 38, z: 50 }, undead: { x: 38, z: 50 },
+  mine: { x: -45, z: -38 }, 'copper dig': { x: -45, z: -38 }, kobolds: { x: -45, z: -38 },
+  bandits: { x: 50, z: -45 }, 'bandit camp': { x: 50, z: -45 },
 };
 
 function entityLine(e: any, me: any): string {
@@ -653,7 +653,10 @@ server.tool(
     }
     const e = game.ents.get(target);
     if (!e) return text(`#${target} not in view`);
-    const approach = await game.moveTo(e.x, e.z, 4);
+    // casters pull from range so the mob comes to them, away from its pack;
+    // melee must close in. Stop short, then fight() yanks the one target out.
+    const caster = (game.self.mres ?? 0) > 0;
+    const approach = await game.moveTo(e.x, e.z, caster ? 20 : 4);
     if (/stuck|gave up/.test(approach)) return text(`couldn't reach #${target}: ${approach}`);
     const result = await game.fight(target, opener_slots);
     return text(`hunt${adds ? ` (1 mob was nearby — watched for adds)` : ''}: ${result}`);
