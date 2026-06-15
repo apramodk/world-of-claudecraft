@@ -41,7 +41,7 @@ export const ZONE1_MOBS: Record<string, MobTemplate> = {
   forest_wolf: {
     id: 'forest_wolf', name: 'Forest Wolf', minLevel: 1, maxLevel: 2, family: 'beast',
     hpBase: 28, hpPerLevel: 14, dmgBase: 3, dmgPerLevel: 1.6, attackSpeed: 2.0,
-    armorPerLevel: 10, moveSpeed: 8, aggroRadius: 10,
+    armorPerLevel: 10, moveSpeed: 7, aggroRadius: 10, // matches player run speed: a bad pull can be outrun to the leash, not a death sentence
     loot: [
       { copper: 8, chance: 1 },
       { itemId: 'wolf_fang', chance: 0.45 },
@@ -389,9 +389,14 @@ export const ZONE1_QUEST_ORDER = [
 
 export const ZONE1_CAMPS: CampDef[] = [
   // Wolves: north woods — two camps kept apart so there's a clear lane of
-  // approach between them and lone wolves wander the fringes (pullable solo)
+  // approach between them, plus genuine lone wolves on the fringes near town
+  // and the road so a careful solo always has a clean single pull (no adds).
   { mobId: 'forest_wolf', center: { x: -28, z: 50 }, radius: 18, count: 6 },
-  { mobId: 'forest_wolf', center: { x: 30, z: 72 }, radius: 18, count: 6 },
+  { mobId: 'forest_wolf', center: { x: 30, z: 72 }, radius: 18, count: 5 },
+  // lone strays — isolated >30yd from either camp, along the town/road approach
+  { mobId: 'forest_wolf', center: { x: 2, z: 28 }, radius: 3, count: 1 },
+  { mobId: 'forest_wolf', center: { x: 8, z: 36 }, radius: 3, count: 1 },
+  { mobId: 'forest_wolf', center: { x: 10, z: 46 }, radius: 3, count: 1 },
   { mobId: 'old_greyjaw', center: { x: 0, z: 95 }, radius: 8, count: 1 },
   // Boars: east meadow
   { mobId: 'wild_boar', center: { x: 55, z: 12 }, radius: 22, count: 6 },

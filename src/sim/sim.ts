@@ -1983,6 +1983,11 @@ export class Sim {
     if (mob.campCenter && mob.campRadius) {
       const template = MOBS[mob.templateId];
       const minHeight = template?.family === 'murloc' ? WATER_LEVEL - 0.5 : WATER_LEVEL + 0.4;
+      // clearance scales with camp size: big camps keep a strong 22yd no-pop-in
+      // buffer, but a tiny lone-stray camp (radius 3) can't offer that, so it
+      // only needs to clear most of its own radius — otherwise a stray a player
+      // is standing near would never repopulate.
+      const clearance = Math.min(22, mob.campRadius * 0.9);
       let chosen: { x: number; z: number } | null = null;
       for (let tries = 0; tries < 8; tries++) {
         const ang = this.rng.range(0, Math.PI * 2);
@@ -1991,7 +1996,7 @@ export class Sim {
         let nearPlayer = false;
         for (const meta of this.players.values()) {
           const pe = this.entities.get(meta.entityId);
-          if (pe && !pe.dead && dist2d(pe.pos, { x: cand.x, y: 0, z: cand.z }) < 22) { nearPlayer = true; break; }
+          if (pe && !pe.dead && dist2d(pe.pos, { x: cand.x, y: 0, z: cand.z }) < clearance) { nearPlayer = true; break; }
         }
         if (!nearPlayer) { chosen = cand; break; }
       }
